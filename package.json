@@ -1,0 +1,20 @@
+{
+  "name": "prompt-later",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test:unit": "node --test tests/unit/*.test.js",
+    "test:browser": "playwright test",
+    "test": "npm run test:unit && npm run build && npm run test:browser",
+    "package": "npm run build && python3 scripts/package.py"
+  },
+  "dependencies": {
+    "croner": "9.1.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.55.1",
+    "esbuild": "0.25.5"
+  }
+}
