@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Prompt Later</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand"><span class="clock" aria-hidden="true"></span><strong>Prompt Later</strong><span class="badge">Local only</span></div>
+      <a id="dashboard-link" href="app.html">Open dashboard</a>
+    </header>
+    <div id="preview-note" class="notice" hidden>Load this folder as a Chrome/Edge extension to schedule messages.</div>
+    <section class="layout">
+      <div class="panel form-panel">
+        <div class="tabs" role="tablist" aria-label="Prompt Later sections">
+          <button role="tab" aria-selected="true" data-tab="send">Send later</button>
+          <button role="tab" aria-selected="false" data-tab="recurring">Recurring</button>
+          <button role="tab" aria-selected="false" data-tab="activity">Activity</button>
+        </div>
+        <div id="form-view">
+          <form id="job-form">
+            <input type="hidden" id="job-id">
+            <div class="field"><label for="url">Conversation URL</label><div class="inline"><input id="url" name="url" type="url" required placeholder="https://chatgpt.com/c/..." autocomplete="off"><button class="secondary" type="button" id="current-tab">Use current tab</button></div><div id="target-help" class="hint">Use a link to an existing conversation.</div><div id="provider-chip" class="chip" hidden></div></div>
+            <div id="once-fields">
+              <div class="field"><label for="when">When</label><select id="when"><option value="5h">In 5 hours</option><option value="1m">In 1 minute</option><option value="custom">Choose date &amp; time</option></select></div>
+              <div class="field" id="custom-time-field" hidden><label for="custom-time">Date and time</label><input id="custom-time" type="datetime-local"><div id="once-zone" class="hint"></div></div>
+              <p class="hint">The default is a five-hour delay, not quota-reset detection.</p>
+            </div>
+            <div id="recurring-fields" hidden>
+              <div class="field"><label for="recurrence">Repeat</label><select id="recurrence"><option value="interval">Every N hours</option><option value="daily">Daily</option><option value="weekdays">Weekdays</option><option value="cron">Advanced cron</option></select></div>
+              <div class="field" id="interval-field"><label for="interval-hours">Every N hours</label><input id="interval-hours" type="number" min="1" step="1" value="5"></div>
+              <div class="field" id="recurring-time-field" hidden><label for="recurring-time">Time</label><input id="recurring-time" type="time" value="07:00"></div>
+              <div class="field" id="cron-field" hidden><label for="cron">Five-field cron</label><input id="cron" type="text" value="0 7 * * 1-5" placeholder="0 7 * * 1-5"><div class="hint">Use exactly five fields.</div></div>
+              <div class="field"><label for="timezone">Time zone</label><input id="timezone" list="zones" value="" placeholder="Europe/London"><datalist id="zones"></datalist></div>
+              <div id="next-preview" class="preview"></div>
+            </div>
+            <div class="field"><label for="message">Message</label><textarea id="message" name="message" rows="7" maxlength="20000" required placeholder="What should be sent in this conversation?"></textarea><div class="hint">Up to 20,000 characters. Prompt Later never stores transcripts or model responses.</div></div>
+            <details class="options"><summary>Options</summary><div class="field"><label for="missed-policy">If late</label><select id="missed-policy"><option value="skip">Skip if more than 5 minutes late</option><option value="run-once">Send once when available</option></select></div></details><div class="actions"><button class="primary" type="submit" id="save">Save scheduled message</button><button class="secondary" type="button" id="check">Check page</button><button class="secondary" type="button" id="cancel-edit" hidden>Cancel editing</button></div><p class="hint permission-note">Access is requested only for the chosen provider site.</p>
+            <p id="form-status" class="status" role="status"></p>
+          </form>
+        </div>
+        <div id="activity-view" hidden><h2>Activity</h2><p class="hint">Sent means the site acknowledged submission; it does not mean the AI has finished.</p><div id="activity-list" class="stack"></div></div>
+      </div>
+      <aside class="panel list-panel"><div class="list-heading"><div><h2 id="list-title">Saved messages</h2><p class="hint">Keep your browser open and computer awake. Turning off the monitor is fine. Scheduled times can be delayed; your account limits still apply.</p></div><span id="job-count" class="count"></span></div><div id="job-list" class="stack"></div><div class="privacy"><strong>Privacy</strong><p>Messages and schedule details stay in this browser's extension storage until sent to the selected provider page. No account, backend, telemetry, or AI key is used.</p></div></aside>
+    </section>
+  </main>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

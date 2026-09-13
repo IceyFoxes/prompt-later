@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Prompt Later",
+  "version": "0.1.0",
+  "description": "Schedule messages in your existing AI chats. Local storage, one-off sends, and recurring schedules.",
+  "minimum_chrome_version": "120",
+  "permissions": ["storage", "alarms", "activeTab", "scripting"],
+  "optional_host_permissions": ["https://chatgpt.com/*", "https://claude.ai/*", "https://app.devin.ai/*"],
+  "background": {"service_worker": "worker.js", "type": "module"},
+  "action": {"default_popup": "app.html?popup=1", "default_title": "Prompt Later"},
+  "options_page": "app.html",
+  "icons": {"16":"icons/icon16.png","32":"icons/icon32.png","48":"icons/icon48.png","128":"icons/icon128.png"},
+  "content_security_policy": {"extension_pages": "script-src 'self'; object-src 'none'"}
+}
