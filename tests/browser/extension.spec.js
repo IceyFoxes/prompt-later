@@ -20,9 +20,11 @@ const testWithExtension = test.extend({ environment: extensionFixture() });
 test('production manifest keeps declared providers optional', async () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'));
   expect(manifest.optional_host_permissions).toEqual([
-    'https://chatgpt.com/*',
-    'https://claude.ai/*',
-    'https://app.devin.ai/*',
+    'https://chatgpt.com/*', 'https://claude.ai/*', 'https://app.devin.ai/*',
+    'https://gemini.google.com/*', 'https://grok.com/*', 'https://chat.deepseek.com/*',
+    'https://www.kimi.com/*', 'https://kimi.com/*', 'https://www.perplexity.ai/*',
+    'https://perplexity.ai/*', 'https://copilot.microsoft.com/*', 'https://chat.qwen.ai/*',
+    'https://chat.mistral.ai/*',
   ]);
   expect(manifest.host_permissions).toBeUndefined();
 });

@@ -1,5 +1,6 @@
 import { parseTarget } from './targets.js';
 import { nextOccurrence, validateSchedule } from './schedules.js';
+import { providerLabel } from './providers.js';
 
 const extension = typeof chrome !== 'undefined' && Boolean(chrome.runtime?.sendMessage);
 const $ = id => document.getElementById(id);
@@ -232,10 +233,6 @@ function formatCountdown(timestamp) {
   if (delta <= 0) return 'Due';
   const minutes = Math.round(delta / 60000);
   return minutes < 60 ? `in ${minutes} min` : `in ${Math.floor(minutes / 60)}h ${minutes % 60}m`;
-}
-
-function providerLabel(provider) {
-  return provider === 'chatgpt' ? 'ChatGPT' : provider === 'claude' ? 'Claude' : 'Devin (experimental)';
 }
 
 function statusLabel(job) {
