@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { fixtureForNew } from './provider-fixtures.js';
 
 export const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -85,12 +86,12 @@ export async function openExtension(options = {}) {
   });
   await context.route('**/*', async route => {
     const url = new URL(route.request().url());
-    if (url.protocol === 'https:' && ['chatgpt.com', 'claude.ai', 'app.devin.ai'].includes(url.hostname)) {
-      return route.fulfill({
-        status: 200,
-        contentType: 'text/html',
-        body: fixtureFor(url.hostname, options.fixture || {}),
-      });
+    if (url.protocol === 'https:') {
+      const newFixture = fixtureForNew(url.hostname, options.fixture || {});
+      if (newFixture) return route.fulfill({ status: 200, contentType: 'text/html', body: newFixture });
+      if (['chatgpt.com', 'claude.ai', 'app.devin.ai'].includes(url.hostname)) {
+        return route.fulfill({ status: 200, contentType: 'text/html', body: fixtureFor(url.hostname, options.fixture || {}) });
+      }
     }
     if (url.protocol === 'http:' || url.protocol === 'https:') return route.abort();
     return route.continue();
