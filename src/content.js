@@ -1,54 +1,11 @@
+import { PROVIDERS, providerForHost } from './providers.js';
+import { EDITOR_MESSAGE } from './page-editor.js';
 import { parseTarget, sameTarget } from './targets.js';
 
-const SELECTORS = {
-  chatgpt: {
-    editors: ['#prompt-textarea', '[data-testid="composer-text-input"]'],
-    sends: [
-      'button[data-testid="send-button"]',
-      'button[aria-label="Send prompt"]',
-      'button[aria-label="Send message"]',
-      'button[aria-label="Send"]',
-    ],
-    users: ['[data-message-author-role="user"]'],
-  },
-  claude: {
-    editors: [
-      '[data-testid="chat-input"][contenteditable="true"]',
-      '[data-testid="composer"] [contenteditable="true"]',
-      '.ProseMirror[contenteditable="true"]',
-      '[role="textbox"][contenteditable="true"]',
-    ],
-    sends: [
-      'button[aria-label="Send message"]',
-      'button[aria-label="Send Message"]',
-      'button[data-testid="send-button"]',
-    ],
-    users: ['[data-testid="user-message"]', '[data-testid="user-message-content"]'],
-  },
-  devin: {
-    editors: [
-      'textarea[placeholder*="Devin" i]',
-      '[role="textbox"][contenteditable="true"]',
-      'main textarea',
-    ],
-    sends: [
-      'button[data-testid="send-message-button"]',
-      'button[aria-label="Send message"]',
-      'button[aria-label="Send"]',
-    ],
-    users: ['[data-message-role="user"]', '[data-role="user"]', '[data-testid="user-message"]'],
-  },
-};
-
+const SELECTORS = Object.fromEntries(Object.entries(PROVIDERS).map(([id, config]) => [id, config.selectors]));
 const state = globalThis.__promptLaterState ||= {
   reservations: new Map(),
   commits: new Map(),
-};
-const providerForHost = host => {
-  if (host === 'chatgpt.com' || host === 'chat.openai.com') return 'chatgpt';
-  if (host === 'claude.ai') return 'claude';
-  if (host === 'app.devin.ai') return 'devin';
-  return null;
 };
 
 function isVisible(element) {
@@ -88,28 +45,48 @@ function normalized(value) {
 
 function editor(provider) {
   for (const selector of SELECTORS[provider].editors) {
-    const nodes = [...document.querySelectorAll(selector)].filter(isEligibleEditor);
+    const nodes = [...document.querySelectorAll(selector)].filter(isEligibleEditor)
+      .filter(node => !PROVIDERS[provider].enhanced || node.getAttribute('aria-readonly') !== 'true');
     if (nodes.length > 1) throw new Error('Composer controls are ambiguous.');
     if (nodes.length === 1) return nodes[0];
   }
   throw new Error('Composer was not found.');
 }
 
-function scopeFor(composer) {
-  return composer.closest('form') || composer.closest('main') || composer.parentElement;
+function scopeFor(composer, provider) {
+  const fallback = composer.closest('form') || composer.closest('main') || composer.parentElement;
+  const config = PROVIDERS[provider];
+  if (!config.enhanced) return fallback;
+  const preferred = config.composerScopes ? composer.closest(config.composerScopes) : null;
+  if (preferred) return preferred;
+  if (!composer.closest('form') && !composer.closest('main')) {
+    for (let node = composer.parentElement, depth = 0; node && node !== document.body && node !== document.documentElement && depth < 6; node = node.parentElement, depth += 1) {
+      if (config.selectors.sends.some(selector => node.querySelector(selector))) return node;
+    }
+  }
+  return fallback === document.body || fallback === document.documentElement ? null : fallback;
 }
 
 function accessibleLabel(button) {
   return (button.getAttribute('aria-label') || button.textContent || '').trim();
 }
 
+function sendEnabled(provider, element) {
+  if (!isEnabled(element)) return false;
+  if (!PROVIDERS[provider].enhanced) return true;
+  const disabled = '[disabled],[aria-disabled="true"],[data-disabled="true"],.disabled,.stop-button';
+  return !element.closest(disabled)
+    && !element.querySelector(disabled)
+    && !/^(stop|stop generating|stop response|stop responding|cancel|attach|upload|voice)$/i.test(accessibleLabel(element));
+}
+
 function sendButton(provider, composer) {
-  const scope = scopeFor(composer);
+  const scope = scopeFor(composer, provider);
   if (!scope) return null;
   for (const selector of SELECTORS[provider].sends) {
     const candidates = [...scope.querySelectorAll(selector)].filter(isVisible);
     if (candidates.length > 1) throw new Error('Send controls are ambiguous.');
-    if (candidates.length === 1) return isEnabled(candidates[0]) ? candidates[0] : null;
+    if (candidates.length === 1) return sendEnabled(provider, candidates[0]) ? candidates[0] : null;
   }
   const form = composer.closest('form');
   if (!form) return null;
@@ -117,7 +94,7 @@ function sendButton(provider, composer) {
     .filter(isVisible)
     .filter(button => /^(send|send message|send prompt|submit message)$/i.test(accessibleLabel(button)));
   if (fallback.length > 1) throw new Error('Send controls are ambiguous.');
-  return fallback.length === 1 && isEnabled(fallback[0]) ? fallback[0] : null;
+  return fallback.length === 1 && sendEnabled(provider, fallback[0]) ? fallback[0] : null;
 }
 
 function alertState() {
@@ -128,8 +105,8 @@ function alertState() {
   return alert ? 'A visible page error or rate limit is present.' : '';
 }
 
-function attachments(composer) {
-  const scope = scopeFor(composer);
+function attachments(provider, composer) {
+  const scope = scopeFor(composer, provider);
   if (!scope) return false;
   return [...scope.querySelectorAll('input[type="file"]')].some(input => input.files?.length)
     || [...scope.querySelectorAll('button')]
@@ -137,8 +114,10 @@ function attachments(composer) {
       .some(button => /remove (file|attachment)/i.test(accessibleLabel(button)));
 }
 
-function busy() {
-  return [...document.querySelectorAll('button,[role="button"]')]
+function busy(provider) {
+  const config = PROVIDERS[provider];
+  const enhanced = config?.busySelectors?.some(selector => [...document.querySelectorAll(selector)].some(isVisible));
+  return Boolean(enhanced) || [...document.querySelectorAll('button,[role="button"]')]
     .filter(isVisible)
     .some(element => {
       const testId = element.getAttribute('data-testid') || '';
@@ -149,10 +128,15 @@ function busy() {
 }
 
 function matchingUsers(provider, message) {
+  const config = PROVIDERS[provider];
   const nodes = [...new Set(SELECTORS[provider].users.flatMap(selector => [...document.querySelectorAll(selector)]))]
     .filter(isVisible)
+    .filter(node => !config.enhanced || !node.closest('form,[contenteditable],textarea,input,nav,aside,dialog,[role="dialog"]'))
     .filter((node, index, all) => !all.some((other, otherIndex) => otherIndex !== index && other.contains(node)));
-  return nodes.filter(node => normalized(textOf(node)) === normalized(message));
+  return nodes.filter(node => {
+    const textNode = config.userTextSelector ? node.querySelector(config.userTextSelector) || node : node;
+    return normalized(textOf(textNode)) === normalized(message);
+  });
 }
 
 function targetMatches(url) {
@@ -167,8 +151,8 @@ function targetMatches(url) {
 function inspection(provider) {
   const composer = editor(provider);
   const draft = normalized(textOf(composer));
-  const busyState = busy();
-  const attachmentState = attachments(composer);
+  const busyState = busy(provider);
+  const attachmentState = attachments(provider, composer);
   const error = alertState();
   if (draft || busyState || attachmentState || error) {
     return {
@@ -205,8 +189,8 @@ function preflight(provider, message, runId, url) {
   }
   const composer = editor(provider);
   if (normalized(textOf(composer))) throw new Error('The composer already contains a draft; it was left untouched.');
-  if (attachments(composer)) throw new Error('Pending attachments must be removed before sending.');
-  if (busy()) throw new Error('The provider is still generating a response.');
+  if (attachments(provider, composer)) throw new Error('Pending attachments must be removed before sending.');
+  if (busy(provider)) throw new Error('The provider is still generating a response.');
   const error = alertState();
   if (error) throw new Error(error);
   const target = parseTarget(url);
@@ -221,6 +205,18 @@ function preflight(provider, message, runId, url) {
     expires: Date.now() + 30000,
   });
   return { ready: true, detail: 'Composer is ready.' };
+}
+
+async function insertPageEditor(composer, message, runId, url) {
+  const marker = crypto.randomUUID();
+  composer.setAttribute('data-prompt-later-editor', marker);
+  try {
+    const result = await chrome.runtime.sendMessage({ type: EDITOR_MESSAGE, runId, url, message, marker });
+    if (!result?.ok) throw new Error(result?.error || 'The page editor did not acknowledge insertion.');
+    return result.data === true && normalized(textOf(composer)) === normalized(message);
+  } finally {
+    if (composer.getAttribute('data-prompt-later-editor') === marker) composer.removeAttribute('data-prompt-later-editor');
+  }
 }
 
 function insert(composer, message) {
@@ -272,12 +268,16 @@ async function commit(provider, url, runId, message, record) {
   const composer = editor(provider);
   if (composer !== reservation.composer || !composer.isConnected) throw new Error('The composer changed before sending.');
   if (normalized(textOf(composer))) throw new Error('The composer changed before sending; the message remains in the composer.');
-  if (busy() || attachments(composer) || alertState()) throw new Error('The page is no longer ready to send.');
-  if (!insert(composer, message)) throw new Error('Message insertion was not acknowledged; the message remains in the composer.');
+  if (busy(provider) || attachments(provider, composer) || alertState()) throw new Error('The page is no longer ready to send.');
+  const inserted = PROVIDERS[provider].insertion === 'tiptap' && !(composer instanceof HTMLTextAreaElement) && !(composer instanceof HTMLInputElement)
+    ? await insertPageEditor(composer, message, runId, url)
+    : insert(composer, message);
+  if (!inserted) throw new Error('Message insertion was not acknowledged; the message remains in the composer.');
   const button = await waitForButton(provider, composer);
   if (!button) throw new Error('The explicit send control was not found; the message remains in the composer.');
   if (!targetMatches(url) || !composer.isConnected || editor(provider) !== composer
-      || normalized(textOf(composer)) !== normalized(message) || busy() || attachments(composer) || alertState()) {
+      || normalized(textOf(composer)) !== normalized(message) || busy(provider) || attachments(provider, composer) || alertState()
+      || (PROVIDERS[provider].enhanced && (!sendEnabled(provider, button) || sendButton(provider, composer) !== button))) {
     throw new Error('The page changed before sending; the message remains in the composer.');
   }
   record.clicked = true;
