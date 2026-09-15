@@ -1,0 +1,42 @@
+{
+  "repository": "IceyFoxes/prompt-later",
+  "repositoryVariables": {
+    "CWS_PUBLISH_ENABLED": "false",
+    "CWS_PUBLISHER_ID": "98237765-c9fc-4a03-b8d3-aa39e7b512d3",
+    "CWS_EXTENSION_ID": "mlcnccgjmdfalcjplophachfjmpmbhal",
+    "CWS_WORKLOAD_IDENTITY_PROVIDER": null,
+    "CWS_SERVICE_ACCOUNT": null
+  },
+  "googleCloud": {
+    "projectId": null,
+    "projectNumber": null,
+    "requiredApis": [
+      "chromewebstore.googleapis.com",
+      "iam.googleapis.com",
+      "iamcredentials.googleapis.com",
+      "sts.googleapis.com"
+    ],
+    "serviceAccountId": "prompt-later-publisher",
+    "workloadIdentityPoolId": "prompt-later-releases",
+    "workloadIdentityProviderId": "github",
+    "issuerUri": "https://token.actions.githubusercontent.com",
+    "attributeMapping": {
+      "google.subject": "assertion.sub",
+      "attribute.repository_id": "assertion.repository_id",
+      "attribute.repository_owner_id": "assertion.repository_owner_id"
+    },
+    "attributeCondition": "assertion.repository_id == '1368753559' && assertion.repository_owner_id == '114825557' && assertion.event_name == 'push' && assertion.ref.startsWith('refs/tags/v') && assertion.workflow_ref == 'IceyFoxes/prompt-later/.github/workflows/release.yml@' + assertion.ref",
+    "serviceAccountRoleForFederatedPrincipal": "roles/iam.workloadIdentityUser",
+    "principalSetTemplate": "principalSet://iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/prompt-later-releases/attribute.repository_id/1368753559",
+    "linkServiceAccountInStoreDashboard": true,
+    "createServiceAccountKey": false
+  },
+  "firstSubmission": {
+    "requiresExplicitApproval": true,
+    "selectVisibilityInDeveloperDashboard": "unlisted",
+    "completeListingAndPrivacyFields": true,
+    "publishableListingStatus": "ready",
+    "currentListingStatus": "draft",
+    "enablePublishingOnlyAfterReviewingPackageAndAccountSetup": true
+  }
+}

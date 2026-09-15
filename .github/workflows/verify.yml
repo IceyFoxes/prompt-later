@@ -1,0 +1,67 @@
+name: Verify Extension
+
+'on':
+  workflow_call:
+    inputs:
+      release_tag:
+        type: string
+        required: false
+        default: ''
+    outputs:
+      artifact_id:
+        value: ${{ jobs.verify.outputs.artifact_id }}
+      sha256:
+        value: ${{ jobs.verify.outputs.sha256 }}
+      version:
+        value: ${{ jobs.verify.outputs.version }}
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      artifact_id: ${{ steps.archive.outputs.artifact-id }}
+      sha256: ${{ steps.package.outputs.sha256 }}
+      version: ${{ steps.package.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.20.0'
+          package-manager-cache: false
+      - name: Validate release metadata
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: node scripts/verify-release.mjs
+      - run: python3 -B -m unittest discover -s tests/unit -p 'test_package.py'
+      - run: npm ci
+      - run: npx --no-install playwright install --with-deps chromium
+      - run: npm test
+      - name: Package tested build
+        id: package
+        run: python3 scripts/package.py && python3 scripts/verify-package.py
+      - name: Preserve extension package
+        id: archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: prompt-later-${{ github.run_id }}-${{ github.run_attempt }}
+          path: release/prompt-later.zip
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+      - name: Preserve failed browser checks
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: test-failures-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 7
