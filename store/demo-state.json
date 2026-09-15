@@ -1,0 +1,50 @@
+{
+  "capturedAt": 1789393808986,
+  "state": {
+    "version": 1,
+    "jobs": [
+      {
+        "missedPolicy": "skip",
+        "createdAt": 1789393808986,
+        "updatedAt": 1789393808986,
+        "enabled": true,
+        "status": "scheduled",
+        "runId": null,
+        "lastOutcome": null,
+        "lastDetail": "",
+        "id": "demo-once",
+        "provider": "chatgpt",
+        "url": "https://chatgpt.com/c/demo-conversation",
+        "message": "Continue reviewing the remaining changes and summarize any issues.",
+        "schedule": {
+          "type": "once",
+          "at": 1789411808986,
+          "timeZone": "UTC"
+        },
+        "nextRunAt": 1789411808986
+      },
+      {
+        "missedPolicy": "skip",
+        "createdAt": 1789393808986,
+        "updatedAt": 1789393808986,
+        "enabled": true,
+        "status": "scheduled",
+        "runId": null,
+        "lastOutcome": null,
+        "lastDetail": "",
+        "id": "demo-weekdays",
+        "provider": "claude",
+        "url": "https://claude.ai/chat/demo-morning",
+        "message": "Review the open tasks and suggest the first three priorities for today.",
+        "schedule": {
+          "type": "cron",
+          "expression": "0 7 * * 1-5",
+          "preset": "weekdays",
+          "timeZone": "UTC"
+        },
+        "nextRunAt": 1789455600000
+      }
+    ],
+    "history": []
+  }
+}

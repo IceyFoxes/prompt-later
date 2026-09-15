@@ -1,0 +1,96 @@
+{
+  "status": "draft",
+  "privacyStatus": "ready",
+  "visibility": "unlisted",
+  "title": "Prompt Later",
+  "shortDescription": "Schedule messages in your existing AI chats. Local storage, one-off sends, and recurring schedules.",
+  "category": "Productivity",
+  "language": "en",
+  "price": "Free",
+  "supportEmail": "promptlater.support@gmail.com",
+  "privacyUrl": "https://iceyfoxes.github.io/prompt-later-site/privacy.html",
+  "singlePurpose": "Schedule user-written text messages for delivery to specific existing conversations on supported AI chat websites.",
+  "description": "Send later for your AI chats.\n\nChoose an existing conversation, a time, and a message. Prompt Later attempts to send your message to that saved conversation while your browser is running and your computer is awake.\n\nFEATURES\n- Capture the current conversation URL or paste one.\n- Schedule once: in five hours, in one minute for testing, or at a chosen date and time.\n- Repeat every N hours, daily, on weekdays, or using a five-field cron expression and time zone.\n- Save multiple messages, edit schedules, pause jobs, and review delivery activity.\n- Reuse the matching conversation tab or open it in the background without switching your active tab.\n- Preserve existing drafts and block sending when the page is busy or controls are ambiguous.\n- Report uncertain delivery instead of automatically retrying a potentially completed send.\n\nLOCAL PASSPHRASE VAULT\nSaved messages, conversation URLs, schedules, and activity are encrypted locally. Create a passphrase and unlock again after a browser restart or extension update. Scheduled sending is paused while locked. Unlocking applies each job's late policy, so overdue messages may send immediately. There is no passphrase recovery service.\n\nNo extra account, extension backend, telemetry, or AI API key is required. Messages are delivered through the provider website using your existing signed-in account. The provider processes messages under its own terms and privacy policy.\n\nBETA COMPATIBILITY\nIntegrations are included for ChatGPT and Claude. Devin, Gemini, Grok, DeepSeek, Kimi, Perplexity, Microsoft Copilot, Qwen, and Mistral Le Chat are experimental. Automated tests use simulated provider pages; they do not guarantee live compatibility. Website changes, login state, and account limits can prevent delivery.\n\nIMPORTANT LIMITS\nKeep the browser running, the computer awake, and the vault unlocked. Turning off the monitor is fine. Alarms can be delayed and cannot wake the computer. The five-hour option is a convenience delay, not quota-reset detection. Prompt Later does not bypass account limits or guarantee that an AI will finish its work. Sent means that the page acknowledged the message, not that the response is complete.\n\nPrompt Later is an independent utility and is not affiliated with the supported AI providers.",
+  "permissionJustifications": {
+    "storage": "Store encrypted schedules, target URLs, messages, and activity locally. Keep the derived unlock key only in memory in chrome.storage.session while the extension remains loaded. Neither area is exposed to content scripts.",
+    "alarms": "Wake the background service worker to check the next scheduled delivery while the browser is running. Chrome's alarm system holds the next wake-up time.",
+    "activeTab": "Read the current tab URL when the user opens the extension or chooses Use current tab, so they can select that conversation without pasting its URL.",
+    "scripting": "Inject packaged delivery code into the exact saved conversation after site access is granted. Check the composer, preserve drafts, insert the configured text, activate the explicit send control, and confirm acknowledgement. Grok's supported rich-text editor also requires a guarded main-world call to its existing editor API.",
+    "optional_host_permissions": "Request access only to a provider site chosen by the user. Use granted access to locate the matching conversation tab, open that exact saved URL if necessary, and perform guarded delivery. Access is optional and is not requested for unrelated websites."
+  },
+  "remoteCode": "All extension logic is packaged locally. It interacts with existing provider pages; it does not fetch or evaluate executable code from a server.",
+  "privacyDisclosuresForReview": [
+    { "category": "Authentication information", "use": "A user-chosen local vault passphrase is processed in memory to derive an unlock key. The extension does not store the passphrase or read provider login passwords, cookies, or API keys." },
+    { "category": "Personal communications", "use": "Only user-configured scheduled messages are stored and sent as part of the requested feature. They may contain personal communications. The extension does not store conversation transcripts or model responses." },
+    { "category": "Web history", "use": "Capture a selected tab URL, inspect matching provider-tab URLs, and save the chosen conversation URL for exact targeting. The extension does not collect general browsing history." },
+    { "category": "Website content", "use": "Inspect the target conversation's composer, draft/busy/error states, and matching user-message elements to deliver safely and detect acknowledgement. This is transient page inspection, not transcript storage or export." }
+  ],
+  "testInstructions": [
+    "Install the beta into a separate test browser profile. Create a local vault passphrase of at least 12 characters; no Prompt Later account or API key is required.",
+    "Sign in to a supported AI website with a disposable test account or a reviewer-controlled account. Open an existing disposable ChatGPT conversation, finish any response, and leave its composer empty.",
+    "Open Prompt Later, use the current tab or paste that conversation URL, and grant access only to that site. Check page should inspect readiness without typing or sending.",
+    "Choose In 1 minute and enter: This is a Prompt Later beta test. Reply with OK. Save, close the popup, and switch to another tab while leaving the browser running and vault unlocked.",
+    "The scheduled message should appear once in the saved conversation. Activity should record Sent only after page acknowledgement. Inspect any blocked or uncertain explanation instead of scheduling duplicates.",
+    "For draft protection, schedule another message and type an unsent draft in the target chat before it is due. The draft must remain untouched and the job should need attention.",
+    "Restart the browser. The vault must be locked and automatic delivery paused. Entering the correct passphrase resumes schedules according to their saved late policies. An incorrect passphrase must not reset saved jobs.",
+    "Experimental integrations are not a claim of live compatibility. No provider credentials are included in this draft; use only reviewer-controlled accounts."
+  ],
+  "privacySections": [
+    {
+      "heading": "Scope and purpose",
+      "paragraphs": [
+        "Prompt Later is a browser extension that schedules user-written text messages for specific existing conversations on supported AI websites. The extension has no application backend, user account service, advertising system, or telemetry endpoint.",
+        "This policy covers the extension. The Chrome Web Store, the site hosting this policy, and the AI providers may process information under their own policies."
+      ]
+    },
+    {
+      "heading": "Data handled by the extension",
+      "paragraphs": [
+        "The extension handles the messages you enter, selected conversation URLs and provider names, scheduling and time-zone settings, job identifiers and statuses, and activity records. Activity can include a message preview of up to 160 characters, the target URL, timestamps, and a delivery explanation.",
+        "With your permission, it reads a selected tab URL and matching provider-tab URLs. It inspects the saved conversation page to find the composer, check drafts and busy/error states, insert your scheduled text, and determine whether a matching user message appeared. This page inspection is transient; Prompt Later does not store or export conversation transcripts or AI responses, or collect general browsing history.",
+        "The extension processes your local vault passphrase in memory to derive an encryption key. It does not store the passphrase or read provider account passwords, authentication cookies, or API keys."
+      ]
+    },
+    {
+      "heading": "Local storage and encryption",
+      "paragraphs": [
+        "Saved messages, conversation URLs, schedule definitions, and activity are stored in an AES-256-GCM encrypted vault in local extension storage. The key is derived using PBKDF2-HMAC-SHA256 with a random salt and 600,000 iterations. Each write uses a fresh random nonce.",
+        "While unlocked, the derived key is retained in chrome.storage.session, which Chrome holds in memory for the current extension session. The persistent vault and session storage are restricted to trusted extension contexts. The key is not written to the extension's persistent storage. Plaintext is used in memory and displayed where needed to operate the extension.",
+        "A browser restart, extension reload, disabling the extension, or an extension update clears the session key. You must unlock before scheduled sending resumes. Chrome's alarm system can separately retain the next wake-up time.",
+        "There is no recovery service for a forgotten passphrase. Encryption does not protect data from someone who can control an already unlocked browser, inspect its memory, or access your signed-in provider accounts. Operating-system backups, memory paging, password managers, and browser/profile backups are outside the extension's control.",
+        "When upgrading from an older unencrypted version, automatic scheduling remains paused until you create a passphrase. The original extension-storage record is removed only after the encrypted copy is saved and verified. Removing that record is not a guarantee of forensic erasure from disks or existing backups. If migration cannot finish safely, the extension preserves recoverable data and blocks scheduling."
+      ]
+    },
+    {
+      "heading": "Use, transmission, and sharing",
+      "paragraphs": [
+        "Data is used only to provide the scheduling, delivery, safety, and activity features you request. The extension does not sell user data, use it for advertising or credit decisions, or send it to a Prompt Later server or an analytics service.",
+        "When a job runs, the extension opens or reuses the selected provider's HTTPS conversation page and sends your configured text through that website using your signed-in session. The provider receives and processes the message as an ordinary chat message under its own terms, account limits, and privacy policy. Opening the page also creates the provider's ordinary website traffic.",
+        "Store installation/update services and the host of this policy may receive standard traffic information when you use them. Those services are separate from the extension; this policy does not promise that third-party services keep no logs."
+      ]
+    },
+    {
+      "heading": "Retention and deletion",
+      "paragraphs": [
+        "Saved jobs, including completed jobs, remain in the encrypted vault until you delete them. Sending a message does not automatically delete its saved job. Deleting a job does not delete its separate activity records. The extension retains up to the latest 200 finalized activity records; older finalized records are pruned during state updates.",
+        "The vault and its in-memory key are not synchronized by Prompt Later to another device. Uninstalling the extension removes its local extension data through Chrome. Copies made by you, browser/profile backups, operating-system backups, and records retained by an AI provider are not deleted by uninstalling Prompt Later.",
+        "To remove a message already sent to a provider, use that provider's own deletion controls and policies."
+      ]
+    },
+    {
+      "heading": "Your controls and important limits",
+      "paragraphs": [
+        "You choose the conversation, text, time, recurrence, time zone, and late-run policy. You can edit, pause, or delete saved jobs and revoke site access through Chrome. Revoked access or a locked vault blocks new scheduled delivery attempts. A send already underway may complete; running jobs cannot be edited, paused, or deleted.",
+        "Keep the computer awake, browser running, vault unlocked, and target provider signed in. Scheduled times can be delayed. Unlocking resumes schedules and applies each saved late policy, so overdue messages may be sent immediately. Prompt Later does not bypass usage limits or guarantee provider availability.",
+        "You can clear the in-memory unlock key by reloading or disabling the extension or restarting the browser. Store your passphrase safely; the extension cannot recover it for you."
+      ]
+    },
+    {
+      "heading": "Changes and contact",
+      "paragraphs": [
+        "Material changes to data handling will be reflected in this policy and the extension's disclosures before the changed handling is enabled.",
+        "If you email the support address, the information you choose to send is delivered to that inbox through email providers, including Gmail. Support correspondence is outside the extension's encrypted vault. Prompt Later does not automatically email logs or transcripts. Do not send vault passphrases, provider passwords, cookies, or API keys."
+      ]
+    }
+  ]
+}
