@@ -50,7 +50,29 @@ function editor(provider) {
     if (nodes.length > 1) throw new Error('Composer controls are ambiguous.');
     if (nodes.length === 1) return nodes[0];
   }
-  throw new Error('Composer was not found.');
+  throw Object.assign(new Error('Composer was not found.'), { code: 'COMPOSER_NOT_FOUND' });
+}
+
+async function waitForComposer(provider, url) {
+  const deadline = Date.now() + 15000;
+  let candidate = null;
+  let stableSince = 0;
+  while (Date.now() < deadline) {
+    if (!targetMatches(url)) throw new Error('The page is not the selected conversation.');
+    let composer = null;
+    try { composer = editor(provider); } catch (error) {
+      if (error.code !== 'COMPOSER_NOT_FOUND') throw error;
+    }
+    if (composer && normalized(textOf(composer))) throw new Error('The composer already contains a draft; it was left untouched.');
+    if (composer && attachments(provider, composer)) throw new Error('Pending attachments must be removed before sending.');
+    if (busy(provider)) throw new Error('The provider is still generating a response.');
+    const error = alertState();
+    if (error) throw new Error(error);
+    if (composer !== candidate) { candidate = composer; stableSince = Date.now(); }
+    if (candidate && Date.now() - stableSince >= 500) return;
+    await new Promise(resolve => setTimeout(resolve, Math.min(100, Math.max(1, deadline - Date.now()))));
+  }
+  throw new Error('The composer did not become ready within 15 seconds. Open the saved conversation and reschedule.');
 }
 
 function scopeFor(composer, provider) {
@@ -323,6 +345,10 @@ if (!globalThis.__promptLaterListeners) {
     const currentProvider = provider();
     const work = (async () => {
       if (!currentProvider || !targetMatches(message.url)) return { status: 'blocked', detail: 'The page is not the selected conversation.' };
+      if (message.waitForComposer === true && message.type !== 'PL_COMMIT') {
+        await waitForComposer(currentProvider, message.url);
+        if (!targetMatches(message.url)) return { status: 'blocked', detail: 'The page is not the selected conversation.' };
+      }
       if (message.type === 'PL_INSPECT') return inspection(currentProvider);
       if (message.type === 'PL_PREPARE') return preflight(currentProvider, message.message, message.runId, message.url);
       return commitOnce(currentProvider, message);

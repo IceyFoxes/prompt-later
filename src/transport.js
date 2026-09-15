@@ -42,6 +42,7 @@ async function callPage(chromeApi, tabId, message, timeout = 20000) {
 
 async function pageForTarget(chromeApi, target) {
   let tab = await findTab(chromeApi, target);
+  const waitForComposer = !tab || tab.status !== 'complete';
   if (!tab) tab = await chromeApi.tabs.create({ url: target.url, active: false });
   await waitForTab(chromeApi, tab.id, target.url);
   await chromeApi.scripting.executeScript({
@@ -49,7 +50,7 @@ async function pageForTarget(chromeApi, target) {
     files: ['content.js'],
     world: 'ISOLATED',
   });
-  return tab;
+  return { tab, waitForComposer };
 }
 
 export function createDelivery(chromeApi) {
@@ -58,15 +59,19 @@ export function createDelivery(chromeApi) {
     if (!(await hasPermission(chromeApi, target.origin))) {
       return { outcome: 'blocked', detail: 'Allow access to this provider before sending.' };
     }
-    const tab = await pageForTarget(chromeApi, target);
+    const { tab, waitForComposer } = await pageForTarget(chromeApi, target);
     const prepared = await callPage(chromeApi, tab.id, {
       type: 'PL_PREPARE',
+      waitForComposer,
       runId: run.id,
       url: target.url,
       message: job.message,
     });
     if (!prepared?.ready) {
       return { outcome: 'blocked', detail: prepared?.detail || 'The page is not ready to receive this message.' };
+    }
+    if (!(await hasPermission(chromeApi, target.origin))) {
+      return { outcome: 'blocked', detail: 'Site access was removed before sending.' };
     }
     await markDispatching();
     try {
@@ -94,6 +99,6 @@ export async function inspectTarget(chromeApi, url) {
   if (!(await hasPermission(chromeApi, target.origin))) {
     return { status: 'blocked', detail: 'Allow access to this provider to check the page.' };
   }
-  const tab = await pageForTarget(chromeApi, target);
-  return callPage(chromeApi, tab.id, { type: 'PL_INSPECT', url: target.url });
+  const { tab, waitForComposer } = await pageForTarget(chromeApi, target);
+  return callPage(chromeApi, tab.id, { type: 'PL_INSPECT', url: target.url, waitForComposer });
 }

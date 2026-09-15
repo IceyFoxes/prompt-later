@@ -67,6 +67,24 @@ export function fixtureFor(host, options = {}) {
       ${alertScript}
     }));
   `;
+  if (options.composerDelayMs > 0) {
+    const markup = `${editorMarkup}${modal}${sendMarkup}<div id="messages"></div>`;
+    const remount = Number(options.composerRemountMs) || 0;
+    return `<!doctype html><html><body><main></main><script>
+      const mount = () => {
+        document.querySelector('main').innerHTML = ${JSON.stringify(markup)};
+        window.__fixtureMounts = (window.__fixtureMounts || 0) + 1;
+        ${script}
+      };
+      window.addEventListener('load', () => {
+        window.__fixtureLoadedAt = performance.now();
+        setTimeout(() => {
+          mount();
+          if (${remount} > 0) setTimeout(mount, ${remount});
+        }, ${Number(options.composerDelayMs)});
+      });
+    </script></body></html>`;
+  }
   return `<!doctype html><html><body><main>${editorMarkup}${modal}${sendMarkup}<div id="messages"></div></main><script>${script}</script></body></html>`;
 }
 
@@ -96,7 +114,11 @@ async function launchExtension(copy, profile, options) {
       const newFixture = fixtureForNew(url.hostname, options.fixture || {});
       if (newFixture) return route.fulfill({ status: 200, contentType: 'text/html', body: newFixture });
       if (['chatgpt.com', 'claude.ai', 'app.devin.ai'].includes(url.hostname)) {
-        return route.fulfill({ status: 200, contentType: 'text/html', body: fixtureFor(url.hostname, options.fixture || {}) });
+        const fixture = options.fixture || {};
+        if (fixture.responseDelayMs > 0 && (!fixture.responseDelayPath || fixture.responseDelayPath === url.pathname)) {
+          await new Promise(resolve => setTimeout(resolve, Number(fixture.responseDelayMs)));
+        }
+        return route.fulfill({ status: 200, contentType: 'text/html', body: fixtureFor(url.hostname, fixture) });
       }
     }
     if (url.protocol === 'http:' || url.protocol === 'https:') return route.abort();
