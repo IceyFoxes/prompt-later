@@ -12,6 +12,11 @@ const state = {
   editing: null,
   popup: params.get('popup') === '1',
   sourceTabId: params.has('sourceTabId') && Number.isInteger(Number(params.get('sourceTabId'))) && Number(params.get('sourceTabId')) > 0 ? Number(params.get('sourceTabId')) : null,
+  accessTarget: null,
+  accessGranted: null,
+  accessChecking: false,
+  accessPending: false,
+  accessGeneration: 0,
   pending: false,
   vault: null,
   vaultPending: false,
@@ -41,6 +46,75 @@ function localValue(timestamp) {
 
 function isUnlocked() {
   return state.vault?.configured === true && state.vault.locked === false;
+}
+
+function accessStatus(value, error = false) {
+  text($('permission-status'), value);
+  $('permission-status').className = `status ${error ? 'error' : 'success'}`;
+}
+
+function renderAccessGate() {
+  const visible = isUnlocked() && (state.accessChecking || (state.accessTarget && state.accessGranted === false));
+  $('permission-panel').hidden = !visible;
+  $('scheduler-view').hidden = !isUnlocked() || visible;
+  if (!visible) return;
+  const resolving = state.accessChecking || !state.accessTarget;
+  $('permission-actions').hidden = resolving;
+  $('permission-allow').disabled = resolving || state.accessPending;
+  $('permission-dismiss').disabled = resolving || state.accessPending;
+  if (resolving) {
+    $('permission-title').textContent = 'Checking site access…';
+    $('permission-description').textContent = 'Checking whether Prompt Later can use the selected conversation.';
+    return;
+  }
+  $('permission-title').textContent = `Allow ${state.accessTarget.label} access`;
+  $('permission-description').textContent = `Prompt Later needs access to ${state.accessTarget.origin} to check this conversation and send scheduled messages. Access is limited to this site and can be removed in Chrome settings.`;
+  $('permission-allow').textContent = `Allow ${state.accessTarget.label}`;
+}
+
+function clearAccessTarget() {
+  state.accessGeneration += 1;
+  state.accessTarget = null;
+  state.accessGranted = null;
+  state.accessChecking = false;
+  accessStatus('');
+  renderAccessGate();
+}
+
+async function permissionGranted(target) {
+  return Boolean(extension && await chrome.permissions.contains({ origins: [`${target.origin}/*`] }));
+}
+
+async function selectAccessTarget(target, blocking = false) {
+  const generation = ++state.accessGeneration;
+  state.accessTarget = target;
+  state.accessGranted = null;
+  state.accessChecking = blocking;
+  accessStatus('');
+  renderAccessGate();
+  let granted = false;
+  try {
+    granted = await permissionGranted(target);
+  } catch {}
+  if (generation !== state.accessGeneration) return false;
+  state.accessChecking = false;
+  state.accessGranted = granted;
+  renderAccessGate();
+  return granted;
+}
+
+async function requireAccess(target) {
+  const generation = ++state.accessGeneration;
+  state.accessTarget = target;
+  let granted = false;
+  try {
+    granted = await permissionGranted(target);
+  } catch {}
+  if (generation !== state.accessGeneration) return false;
+  state.accessGranted = granted;
+  state.accessChecking = false;
+  renderAccessGate();
+  return granted;
 }
 
 function setStatus(value, error = false) {
@@ -199,6 +273,7 @@ function clearForm() {
   $('cancel-edit').hidden = true;
   $('save').textContent = 'Save scheduled message';
   showTarget();
+  clearAccessTarget();
   syncFormVisibility();
   previewSchedule();
 }
@@ -230,6 +305,7 @@ function fillJob(job) {
   renderTabs();
   syncFormVisibility();
   updateTargetPreview();
+  void selectAccessTarget(parseTarget(job.url));
   previewSchedule();
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
@@ -465,7 +541,6 @@ function renderVault(status, error = '') {
   const protectedMode = status?.mode === 'passphrase';
   const unlockForm = locked && protectedMode && !state.popup;
   $('vault-panel').hidden = !locked;
-  $('scheduler-view').hidden = locked;
   $('vault-form').hidden = !unlockForm;
   $('vault-help').hidden = !unlockForm;
   $('vault-title').textContent = protectedMode ? 'Unlock Prompt Later' : 'Saved data unavailable';
@@ -479,6 +554,7 @@ function renderVault(status, error = '') {
   text($('vault-status'), error);
   renderPrivacySettings();
   if (locked) clearSchedulerView();
+  renderAccessGate();
   setPending(state.pending);
 }
 
@@ -526,13 +602,13 @@ async function load() {
     state.data = data.data;
     renderVault(status);
     renderJobs();
-    if (captureSource) await currentTab();
+    if (captureSource) await currentTab(true);
   } catch (error) {
     if (generation === state.loadGeneration) renderVault(status, error?.message || 'Could not read saved messages.');
   }
 }
 
-async function currentTab() {
+async function currentTab(blocking = false) {
   if (!isUnlocked()) return;
   let result;
   try {
@@ -541,21 +617,60 @@ async function currentTab() {
     await load();
     return;
   }
-  if (!result.ok || !result.data?.url || !isUnlocked()) return;
+  if (!result.ok || !result.data?.url || !isUnlocked()) { clearAccessTarget(); return; }
   state.sourceTabId = result.data.id;
   try {
     const target = parseTarget(result.data.url);
     $('url').value = target.url;
     showTarget(target);
+    await selectAccessTarget(target, blocking);
   } catch {
     $('url').value = '';
     showTarget();
+    clearAccessTarget();
   }
 }
 
-async function requestAccess(target, denialMessage) {
-  const granted = await chrome.permissions.request({ origins: [`${target.origin}/*`] });
-  if (!granted) throw new Error(denialMessage);
+async function grantAccess() {
+  if (!state.accessTarget || state.accessChecking || state.accessPending || !isUnlocked()) return;
+  const target = state.accessTarget;
+  state.accessPending = true;
+  accessStatus('');
+  renderAccessGate();
+  try {
+    const granted = await chrome.permissions.request({ origins: [`${target.origin}/*`] });
+    if (target !== state.accessTarget) return;
+    state.accessGranted = granted;
+    if (!granted) {
+      accessStatus('Access was not granted. Nothing was scheduled or sent.', true);
+      return;
+    }
+    setStatus(`${target.label} access granted. You can schedule this conversation.`);
+  } catch (error) {
+    if (target === state.accessTarget) accessStatus(error?.message || 'Site access could not be requested.', true);
+  } finally {
+    state.accessPending = false;
+    renderAccessGate();
+  }
+  if (target === state.accessTarget && state.accessGranted) $('message').focus();
+}
+
+function dismissAccess() {
+  if (state.accessPending || state.accessChecking) return;
+  $('url').value = '';
+  showTarget();
+  clearAccessTarget();
+  setStatus('Choose an existing conversation before scheduling.');
+  $('url').focus();
+}
+
+async function syncUrlAccess() {
+  if (!isUnlocked()) return;
+  try {
+    await selectAccessTarget(parseTarget($('url').value));
+  } catch {
+    clearAccessTarget();
+  }
 }
 
 async function checkPage() {
@@ -563,7 +678,7 @@ async function checkPage() {
   try {
     const target = parseTarget($('url').value);
     setPending(true);
-    await requestAccess(target, 'Site access was not granted. Nothing was opened or sent.');
+    if (!(await requireAccess(target))) return;
     const result = await send('CHECK_TARGET', { url: target.url });
     if (!result.ok) throw new Error(result.error);
     const blocked = result.data?.status === 'blocked';
@@ -582,8 +697,8 @@ async function save(event) {
     const payload = readForm();
     const target = parseTarget(payload.url);
     setPending(true);
+    if (!(await requireAccess(target))) return;
     setStatus('Saving message…');
-    await requestAccess(target, 'Site access was not granted. Nothing was scheduled.');
     const result = await send('UPSERT_JOB', payload);
     if (!result.ok) throw new Error(result.error);
     setStatus(state.editing ? 'Message updated.' : 'Message scheduled.');
@@ -621,6 +736,8 @@ function switchTab(event) {
 
 document.querySelectorAll('[role="tab"]').forEach(tab => tab.addEventListener('click', switchTab));
 $('vault-form').addEventListener('submit', vaultSubmit);
+$('permission-allow').addEventListener('click', grantAccess);
+$('permission-dismiss').addEventListener('click', dismissAccess);
 $('vault-retry').addEventListener('click', load);
 $('privacy-form').addEventListener('submit', privacySubmit);
 $('privacy-enable').addEventListener('click', showPassphraseForm);
@@ -631,7 +748,7 @@ $('privacy-cancel').addEventListener('click', () => {
   $('privacy-enable').focus();
 });
 form.addEventListener('submit', save);
-$('current-tab').addEventListener('click', currentTab);
+$('current-tab').addEventListener('click', () => currentTab());
 $('check').addEventListener('click', checkPage);
 $('cancel-edit').addEventListener('click', clearForm);
 $('dashboard-link').addEventListener('click', openDashboard);
@@ -642,10 +759,15 @@ $('recurring-time').addEventListener('input', previewSchedule);
 $('cron').addEventListener('input', previewSchedule);
 $('timezone').addEventListener('input', previewSchedule);
 $('url').addEventListener('input', updateTargetPreview);
-if (extension) chrome.storage.onChanged.addListener((changes, area) => {
-  if ((area === 'local' || area === 'session') && Object.keys(changes).some(key => ['prompt-later.vault.v1', 'prompt-later.vault-next.v1', 'prompt-later.vault-session.v1', 'prompt-later.v1'].includes(key))) load();
-});
-else {
+$('url').addEventListener('change', syncUrlAccess);
+if (extension) {
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if ((area === 'local' || area === 'session') && Object.keys(changes).some(key => ['prompt-later.vault.v1', 'prompt-later.vault-next.v1', 'prompt-later.vault-session.v1', 'prompt-later.v1'].includes(key))) load();
+  });
+  if (chrome.permissions?.onRemoved) chrome.permissions.onRemoved.addListener(permissions => {
+    if (state.accessTarget && permissions.origins?.includes(`${state.accessTarget.origin}/*`)) void selectAccessTarget(state.accessTarget);
+  });
+} else {
   $('preview-note').hidden = false;
   $('save').disabled = true;
   $('check').disabled = true;
@@ -653,6 +775,10 @@ else {
 if (state.popup) document.body.classList.add('popup');
 populateTimezones();
 clearForm();
+if (state.popup || state.sourceTabId) {
+  state.accessChecking = true;
+  renderAccessGate();
+}
 renderTabs();
 load();
 setInterval(() => {

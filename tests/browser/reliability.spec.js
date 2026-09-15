@@ -18,11 +18,12 @@ async function saveJob(page, url, message = 'Reliability prompt') {
   await expect(page.locator('#form-status')).toContainText('Message scheduled.');
 }
 
-test('R1 permission entry is requested in the Save click before the RPC and denial creates no job', async () => {
+test('R1 permission gate is shown before the scheduler and denial creates no job', async () => {
   await withExtension({}, async ({ page }) => {
     await page.evaluate(() => {
       const entries = [];
       const sendMessage = chrome.runtime.sendMessage;
+      chrome.permissions.contains = async () => false;
       chrome.permissions.request = async details => {
         entries.push({ type: 'permission', details, active: navigator.userActivation.isActive });
         return false;
@@ -34,29 +35,37 @@ test('R1 permission entry is requested in the Save click before the RPC and deni
       window.__permissionEntries = entries;
     });
     await page.locator('#url').fill('https://chatgpt.com/c/permission');
-    await page.locator('#when').selectOption('1m');
-    await page.locator('#message').fill('Denied permission');
-    await page.locator('#save').click();
-    await expect(page.locator('#save')).toBeEnabled();
-    await expect(page.locator('#form-status')).toContainText('Nothing was scheduled');
+    await page.locator('#url').press('Tab');
+    await expect(page.locator('#permission-title')).toHaveText('Allow ChatGPT access');
+    await expect(page.locator('#scheduler-view')).toBeHidden();
+    expect(await page.evaluate(() => window.__permissionEntries)).toEqual([]);
+    await page.locator('#permission-allow').click();
+    await expect(page.locator('#permission-status')).toHaveText('Access was not granted. Nothing was scheduled or sent.');
     const entries = await page.evaluate(() => window.__permissionEntries);
-    expect(entries[0].type).toBe('permission');
-    expect(entries[0].active).toBe(true);
-    expect(entries[0].details.origins).toEqual(['https://chatgpt.com/*']);
+    expect(entries[0]).toEqual({ type: 'permission', details: { origins: ['https://chatgpt.com/*'] }, active: true });
     expect(entries.some(entry => entry.action === 'UPSERT_JOB')).toBe(false);
-    const stored = await readState(page);
-    expect(stored.jobs).toHaveLength(0);
+    expect((await readState(page)).jobs).toHaveLength(0);
   });
 });
 
-test('R1 already granted permission permits Save and Check-page denial opens nothing', async () => {
+test('R1 already granted permission saves while a new provider gates before Check page', async () => {
   await withExtension({}, async ({ page, context }) => {
     await saveJob(page, 'https://chatgpt.com/c/granted');
     const providerTabsBefore = context.pages().filter(candidate => candidate.url().startsWith('https://')).length;
+    await page.evaluate(() => {
+      const actions = [];
+      const sendMessage = chrome.runtime.sendMessage;
+      chrome.permissions.contains = async () => false;
+      chrome.runtime.sendMessage = async message => {
+        if (!['GET_STATE', 'GET_VAULT_STATUS'].includes(message.action)) actions.push(message.action);
+        return sendMessage.call(chrome.runtime, message);
+      };
+      window.__permissionActions = actions;
+    });
     await page.locator('#url').fill('https://claude.ai/chat/denied-check');
-    await page.evaluate(() => { chrome.permissions.request = async () => false; });
-    await page.locator('#check').click();
-    await expect(page.locator('#form-status')).toContainText('Nothing was opened or sent');
+    await page.locator('#url').press('Tab');
+    await expect(page.locator('#permission-title')).toHaveText('Allow Claude access');
+    expect(await page.evaluate(() => window.__permissionActions)).not.toContain('CHECK_TARGET');
     expect(context.pages().filter(candidate => candidate.url().startsWith('https://')).length).toBe(providerTabsBefore);
   });
 });

@@ -2,6 +2,10 @@
 * { box-sizing:border-box; }
 [hidden] { display:none !important; }
 .vault-panel { max-width:520px; margin:0 auto 18px; }
+.permission-panel { max-width:520px; margin:0 auto 18px; }
+.permission-eyebrow { color:var(--accent); font-size:12px; font-weight:700; letter-spacing:.06em; margin-bottom:8px; text-transform:uppercase; }
+#permission-description { color:var(--muted); margin:0 0 16px; }
+#permission-status { margin-bottom:4px; }
 #vault-status { min-height:20px; color:var(--danger); }
 #privacy-settings { margin-top:18px; }
 #privacy-settings > summary { cursor:pointer; color:var(--muted); font-weight:650; }

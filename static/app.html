@@ -28,6 +28,17 @@
         <p class="warning">This passphrase cannot be recovered. Store it somewhere safe. Removing the extension deletes its saved data.</p>
       </div>
     </section>
+    <section id="permission-panel" class="panel permission-panel" aria-labelledby="permission-title" hidden>
+      <div class="permission-eyebrow">Provider access</div>
+      <h2 id="permission-title">Checking site access…</h2>
+      <p id="permission-description">Checking whether Prompt Later can use the selected conversation.</p>
+      <div id="permission-actions" class="actions" hidden>
+        <button id="permission-allow" class="primary" type="button">Allow site access</button>
+        <button id="permission-dismiss" class="secondary" type="button">Choose another conversation</button>
+      </div>
+      <p id="permission-status" class="status" role="status"></p>
+      <p class="hint">Prompt Later requests access only for the selected provider. It never requests access to every supported AI site at once.</p>
+    </section>
     <section id="scheduler-view" class="layout" hidden>
       <div class="panel form-panel">
         <div class="tabs" role="tablist" aria-label="Prompt Later sections">
