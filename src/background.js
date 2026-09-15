@@ -41,15 +41,32 @@ function reportError() {
   Promise.resolve(api?.action?.setBadgeText?.({ text: '!' })).catch(() => {});
 }
 
-export const ready = scheduler ? accessLevel() : Promise.resolve();
+const storageReady = scheduler ? accessLevel() : Promise.resolve();
+export const ready = scheduler ? storageReady.then(() => store.initialize()) : Promise.resolve();
 let initialization;
-async function activeScheduler() {
-  await ready;
-  if ((await store.status()).locked) {
-    scheduler.state = null;
-    scheduler.initialized = false;
-    throw new VaultLockedError();
+
+async function suspendScheduler(locked) {
+  scheduler.state = null;
+  scheduler.initialized = false;
+  await api.alarms.clear('prompt-later:due');
+  await api.action.setBadgeText({ text: locked ? 'LOCK' : '!' });
+}
+
+async function vaultStatus() {
+  await storageReady;
+  let status;
+  try {
+    status = await store.status();
+  } catch (error) {
+    await suspendScheduler(false);
+    throw error;
   }
+  if (status.locked) await suspendScheduler(true);
+  return status;
+}
+
+async function activeScheduler() {
+  if ((await vaultStatus()).locked) throw new VaultLockedError();
   if (!scheduler.initialized) {
     initialization ||= scheduler.initialize().finally(() => { initialization = null; });
     await initialization;
@@ -77,12 +94,13 @@ if (api) {
     }
     if (message?.type !== UI_MESSAGE || !isUiSender(sender, api.runtime.id)) return false;
     (async () => {
-      await ready;
+      await storageReady;
       const payload = message.payload || {};
-      if (message.action === 'GET_VAULT_STATUS') return reply(sendResponse, await store.status());
-      if (message.action === 'SETUP_VAULT' || message.action === 'UNLOCK_VAULT') {
-        if (message.action === 'SETUP_VAULT') await store.setup(payload.passphrase);
-        else await store.unlock(payload.passphrase);
+      if (message.action === 'GET_VAULT_STATUS') return reply(sendResponse, await vaultStatus());
+      if (['UNLOCK_VAULT', 'ENABLE_PASSPHRASE', 'DISABLE_PASSPHRASE'].includes(message.action)) {
+        if (message.action === 'UNLOCK_VAULT') await store.unlock(payload.passphrase);
+        else if (message.action === 'ENABLE_PASSPHRASE') await store.enablePassphrase(payload.passphrase);
+        else await store.disablePassphrase();
         await activeScheduler();
         reply(sendResponse, await store.status());
         runTick();
@@ -128,23 +146,18 @@ if (api) {
     return true;
   });
 
-  const runTick = () => ready.then(async () => {
-    const vaultStatus = await store.status();
-    if (vaultStatus.locked) {
-      await api.alarms.clear('prompt-later:due');
-      await api.action.setBadgeText({ text: 'LOCK' });
-      scheduler.state = null;
-      scheduler.initialized = false;
-      return;
-    }
+  const tickError = async error => {
+    const locked = error?.code === 'VAULT_LOCKED';
+    await suspendScheduler(locked).catch(reportError);
+    if (!locked) reportError();
+  };
+  const runTick = () => storageReady.then(async () => {
+    if ((await vaultStatus()).locked) return;
     await activeScheduler();
     await scheduler.tick();
     await api.action.setBadgeText({ text: '' });
-  }).catch(error => {
-    if (error?.code === 'VAULT_LOCKED') return;
-    reportError(error);
-  });
-  ready.then(runTick).catch(reportError);
+  }).catch(tickError);
+  ready.then(runTick).catch(tickError);
   api.alarms.onAlarm.addListener(alarm => {
     if (alarm.name === 'prompt-later:due') runTick();
   });

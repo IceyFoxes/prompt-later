@@ -78,8 +78,9 @@ try {
   await page.locator('#message').fill(weekdays.message);
   await page.locator('#job-list').getByText(weekdays.message, { exact: true }).waitFor();
   await page.screenshot({ path: path.join(images, 'recurring.png') });
-  await page.evaluate(() => chrome.storage.session.remove('prompt-later.vault-session.v1'));
-  await page.locator('#vault-panel').waitFor({ state: 'visible' });
+  await page.locator('#privacy-settings > summary').click();
+  await page.locator('#privacy-title').getByText('Automatic device protection', { exact: true }).waitFor();
+  await page.locator('#privacy-settings').scrollIntoViewIfNeeded();
   await page.screenshot({ path: path.join(images, 'vault-unlock.png') });
   const promo = await context.newPage();
   await promo.setViewportSize({ width: 440, height: 280 });

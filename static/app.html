@@ -13,18 +13,20 @@
       <a id="dashboard-link" href="app.html">Open dashboard</a>
     </header>
     <div id="preview-note" class="notice" hidden>Load this folder as a Chrome/Edge extension to schedule messages.</div>
-    <section id="vault-panel" class="panel vault-panel" aria-labelledby="vault-title">
-      <h2 id="vault-title">Protect your saved messages</h2>
-      <p id="vault-description">Create a local passphrase to encrypt saved messages, conversation URLs, schedules, and activity. Existing saved data is migrated only after the encrypted copy is verified.</p>
-      <form id="vault-form">
-        <div class="field"><label for="vault-passphrase">Passphrase</label><input id="vault-passphrase" type="password" minlength="12" maxlength="1024" required autocomplete="new-password"></div>
-        <div class="field" id="vault-confirm-field"><label for="vault-confirm">Confirm passphrase</label><input id="vault-confirm" type="password" minlength="12" maxlength="1024" required autocomplete="new-password"></div>
-        <button class="primary" id="vault-submit" type="submit" disabled>Encrypt and resume</button>
-        <p id="vault-status" role="status"></p>
+    <section id="vault-panel" class="panel vault-panel" aria-labelledby="vault-title" hidden>
+      <h2 id="vault-title">Saved data unavailable</h2>
+      <p id="vault-description">Try again to open your saved data. Nothing has been reset.</p>
+      <form id="vault-form" hidden>
+        <div class="field"><label for="vault-passphrase">Passphrase</label><input id="vault-passphrase" type="password" minlength="12" maxlength="1024" required autocomplete="current-password" disabled></div>
+        <button class="primary" id="vault-submit" type="submit" disabled>Unlock and resume</button>
       </form>
-      <p class="hint">Unlock again after a browser restart or extension update. While unlocked, sending can continue with the popup closed and monitor off.</p>
-      <p class="hint">Unlocking resumes schedules and applies each job’s late policy; overdue messages may send immediately.</p>
-      <p class="warning">This passphrase cannot be recovered. Store it somewhere safe. Removing the extension deletes its saved data.</p>
+      <p id="vault-status" role="status"></p>
+      <button class="secondary" id="vault-retry" type="button" hidden>Try again</button>
+      <div id="vault-help" hidden>
+        <p class="hint">Unlock again after a browser restart or extension update. While unlocked, sending can continue with the popup closed and monitor off.</p>
+        <p class="hint">Unlocking resumes schedules and applies each job’s late policy; overdue messages may send immediately.</p>
+        <p class="warning">This passphrase cannot be recovered. Store it somewhere safe. Removing the extension deletes its saved data.</p>
+      </div>
     </section>
     <section id="scheduler-view" class="layout" hidden>
       <div class="panel form-panel">
@@ -57,8 +59,23 @@
         </div>
         <div id="activity-view" hidden><h2>Activity</h2><p class="hint">Sent means the site acknowledged submission; it does not mean the AI has finished.</p><div id="activity-list" class="stack"></div></div>
       </div>
-      <aside class="panel list-panel"><div class="list-heading"><div><h2 id="list-title">Saved messages</h2><p class="hint">Keep your browser open and computer awake. Turning off the monitor is fine. Scheduled times can be delayed; your account limits still apply.</p></div><span id="job-count" class="count"></span></div><div id="job-list" class="stack"></div><div class="privacy"><strong>Privacy</strong><p>Saved messages, conversation URLs, schedules, and activity are encrypted in this browser. The unlock key stays in memory for the current extension session. Messages are sent to the selected provider using your signed-in account. No extension backend, telemetry, or AI API key is used. Completed jobs remain until deleted; activity is retained separately.</p></div></aside>
+      <aside class="panel list-panel"><div class="list-heading"><div><h2 id="list-title">Saved messages</h2><p class="hint">Keep your browser open and computer awake. Turning off the monitor is fine. Scheduled times can be delayed; your account limits still apply.</p></div><span id="job-count" class="count"></span></div><div id="job-list" class="stack"></div><div class="privacy"><strong>Privacy</strong><p>Saved messages, conversation URLs, schedules, and activity are encrypted locally using a browser-held device key by default. Optional passphrase protection is available under Advanced privacy in the full dashboard. Messages are sent to the selected provider using your signed-in account. No extension backend, telemetry, or AI API key is used. Completed jobs remain until deleted; activity is retained separately.</p></div></aside>
     </section>
+    <details id="privacy-settings" class="panel" hidden>
+      <summary>Advanced privacy</summary>
+      <div id="privacy-content">
+        <h3 id="privacy-title"></h3><p id="privacy-description"></p>
+        <button id="privacy-enable" class="secondary" type="button">Require a passphrase</button>
+        <button id="privacy-disable" class="secondary" type="button" hidden>Use automatic device protection</button>
+        <form id="privacy-form" hidden>
+          <p class="warning">A forgotten passphrase cannot be recovered. Browser restarts and extension updates pause schedules until you unlock in the dashboard.</p>
+          <div class="field"><label for="privacy-passphrase">Passphrase</label><input id="privacy-passphrase" type="password" minlength="12" maxlength="1024" required autocomplete="new-password"></div>
+          <div class="field"><label for="privacy-confirm">Confirm passphrase</label><input id="privacy-confirm" type="password" minlength="12" maxlength="1024" required autocomplete="new-password"></div>
+          <div class="actions"><button id="privacy-submit" class="primary" type="submit">Enable passphrase protection</button><button id="privacy-cancel" class="secondary" type="button">Cancel</button></div>
+        </form>
+        <p id="privacy-status" class="status" role="status"></p>
+      </div>
+    </details>
   </main>
   <script type="module" src="app.js"></script>
 </body>

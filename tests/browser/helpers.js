@@ -107,18 +107,13 @@ async function launchExtension(copy, profile, options) {
   const id = new URL(worker.url()).hostname;
   const page = await context.newPage();
   await page.goto(`chrome-extension://${id}/${options.path || 'app.html'}`);
-  if (options.setupVault !== false) {
-    await page.locator('#vault-passphrase').fill('Synthetic vault passphrase');
-    await page.locator('#vault-confirm').fill('Synthetic vault passphrase');
-    await page.locator('#vault-submit').click();
-    await page.locator('#scheduler-view').waitFor({ state: 'visible' });
-  }
+  await page.locator(options.allowLocked ? '#scheduler-view:visible, #vault-panel:visible' : '#scheduler-view').first().waitFor({ state: 'visible' });
   return { context, page, worker, id, copy, profile, options };
 }
 
 export async function restartExtension(environment) {
   await environment.context.close();
-  const next = await launchExtension(environment.copy, environment.profile, { ...environment.options, setupVault: false });
+  const next = await launchExtension(environment.copy, environment.profile, { ...environment.options, allowLocked: true });
   Object.assign(environment, next);
   return environment;
 }

@@ -35,7 +35,7 @@ testWithExtension('saves, previews, and delivers to the chosen conversation', as
   await page.locator('#when').selectOption('1m');
   await page.locator('#message').fill('Synthetic browser prompt');
   await page.locator('#save').click();
-  await expect(page.locator('.status')).toContainText('Message scheduled.');
+  await expect(page.locator('#form-status')).toContainText('Message scheduled.');
   await page.screenshot({ path: path.join(root, 'artifacts/screenshots/dashboard.png'), fullPage: true });
   await page.locator('[data-tab="recurring"]').click();
   await expect(page.locator('#recurring-fields')).toBeVisible();
@@ -75,7 +75,7 @@ testWithExtension('fixture adapters succeed for Claude and experimental Devin', 
     await page.locator('#when').selectOption('1m');
     await page.locator('#message').fill(`Synthetic ${item.target}`);
     await page.locator('#save').click();
-    await expect(page.locator('.status')).toContainText('Message scheduled.');
+    await expect(page.locator('#form-status')).toContainText('Message scheduled.');
     const provider = await context.newPage();
     await provider.goto(item.target);
     await dueState(page, job => job.url === item.target);

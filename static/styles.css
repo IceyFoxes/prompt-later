@@ -3,6 +3,13 @@
 [hidden] { display:none !important; }
 .vault-panel { max-width:520px; margin:0 auto 18px; }
 #vault-status { min-height:20px; color:var(--danger); }
+#privacy-settings { margin-top:18px; }
+#privacy-settings > summary { cursor:pointer; color:var(--muted); font-weight:650; }
+#privacy-settings > summary:focus-visible { outline:3px solid #b9b6ff; outline-offset:4px; }
+#privacy-content { max-width:620px; }
+#privacy-content h3 { font-size:15px; margin:16px 0 6px; }
+#privacy-form { margin-top:14px; }
+body.popup #privacy-settings { display:none; }
 .warning { color:var(--danger); font-size:12px; }
 body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
 button,input,textarea,select { font:inherit; }

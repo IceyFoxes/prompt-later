@@ -37,7 +37,7 @@ async function save(page, target, message) {
   await page.locator('#when').selectOption('1m');
   await page.locator('#message').fill(message);
   await page.locator('#save').click();
-  await expect(page.locator('.status')).toContainText('Message scheduled.');
+  await expect(page.locator('#form-status')).toContainText('Message scheduled.');
 }
 
 async function runDue(page) {

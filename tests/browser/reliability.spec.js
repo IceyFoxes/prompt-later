@@ -15,7 +15,7 @@ async function saveJob(page, url, message = 'Reliability prompt') {
   await page.locator('#when').selectOption('1m');
   await page.locator('#message').fill(message);
   await page.locator('#save').click();
-  await expect(page.locator('.status')).toContainText('Message scheduled.');
+  await expect(page.locator('#form-status')).toContainText('Message scheduled.');
 }
 
 test('R1 permission entry is requested in the Save click before the RPC and denial creates no job', async () => {
@@ -38,7 +38,7 @@ test('R1 permission entry is requested in the Save click before the RPC and deni
     await page.locator('#message').fill('Denied permission');
     await page.locator('#save').click();
     await expect(page.locator('#save')).toBeEnabled();
-    await expect(page.locator('.status')).toContainText('Nothing was scheduled');
+    await expect(page.locator('#form-status')).toContainText('Nothing was scheduled');
     const entries = await page.evaluate(() => window.__permissionEntries);
     expect(entries[0].type).toBe('permission');
     expect(entries[0].active).toBe(true);
@@ -56,7 +56,7 @@ test('R1 already granted permission permits Save and Check-page denial opens not
     await page.locator('#url').fill('https://claude.ai/chat/denied-check');
     await page.evaluate(() => { chrome.permissions.request = async () => false; });
     await page.locator('#check').click();
-    await expect(page.locator('.status')).toContainText('Nothing was opened or sent');
+    await expect(page.locator('#form-status')).toContainText('Nothing was opened or sent');
     expect(context.pages().filter(candidate => candidate.url().startsWith('https://')).length).toBe(providerTabsBefore);
   });
 });
@@ -352,7 +352,7 @@ test('R11 real MV3 alarm delivers after extension UI closes and deletion preserv
     await dashboard.locator('#when').selectOption('1m');
     await dashboard.locator('#message').fill('Second usable job');
     await dashboard.locator('#save').click();
-    await expect(dashboard.locator('.status')).toContainText('Message scheduled.');
+    await expect(dashboard.locator('#form-status')).toContainText('Message scheduled.');
     await dashboard.close();
     await provider.close();
   });

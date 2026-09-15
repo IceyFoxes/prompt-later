@@ -1,4 +1,5 @@
 import { validateState } from './store.js';
+import { DEVICE_KEY_ID, validDeviceKey } from './device-key-store.js';
 
 export const VAULT_KEY = 'prompt-later.vault.v1';
 export const SESSION_KEY = 'prompt-later.vault-session.v1';
@@ -123,6 +124,60 @@ export async function decryptState(envelope, rawKey) {
     return validateState(JSON.parse(decoder.decode(plaintext)));
   } catch {
     throw new Error('The passphrase is incorrect or the saved vault is damaged. Nothing was reset.');
+  } finally {
+    plaintext?.fill(0);
+  }
+}
+
+function deviceAdditionalData(keyId) {
+  return encoder.encode(`prompt-later:vault:2:device:${keyId}`);
+}
+
+export function validateDeviceEnvelope(value) {
+  const keys = ['cipher', 'data', 'iv', 'keyId', 'mode', 'version'];
+  if (!value || typeof value !== 'object' || Object.keys(value).sort().join(',') !== keys.join(',')
+      || value.version !== 2 || value.mode !== 'device' || value.cipher !== 'AES-GCM-256' || value.keyId !== DEVICE_KEY_ID) {
+    throw new Error('The saved automatic vault is unreadable. Nothing was reset.');
+  }
+  decode(value.iv, 12);
+  if (decode(value.data).length < 16) throw new Error('The saved automatic vault is incomplete. Nothing was reset.');
+  return value;
+}
+
+export function vaultMode(value) {
+  if (value?.version === 1 && value?.kdf === 'PBKDF2-SHA256') {
+    validateEnvelope(value);
+    return 'passphrase';
+  }
+  if (value?.version === 2 && value?.mode === 'device') {
+    validateDeviceEnvelope(value);
+    return 'device';
+  }
+  throw new Error('The saved vault is unreadable or unsupported. Nothing was reset.');
+}
+
+export async function encryptDeviceState(state, key, keyId = DEVICE_KEY_ID) {
+  if (!validDeviceKey(key) || keyId !== DEVICE_KEY_ID) throw new Error('The automatic encryption key is invalid. Nothing was reset.');
+  const plaintext = encoder.encode(JSON.stringify(validateState(state)));
+  try {
+    if (plaintext.length > MAX_PLAINTEXT_BYTES) throw new Error('Saved data is too large for the encrypted vault. Existing data was left intact.');
+    const iv = cryptoApi.getRandomValues(new Uint8Array(12));
+    const ciphertext = await cryptoApi.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: deviceAdditionalData(keyId), tagLength: 128 }, key, plaintext);
+    return { version: 2, mode: 'device', cipher: 'AES-GCM-256', keyId, iv: encode(iv), data: encode(new Uint8Array(ciphertext)) };
+  } finally {
+    plaintext.fill(0);
+  }
+}
+
+export async function decryptDeviceState(envelope, key) {
+  validateDeviceEnvelope(envelope);
+  let plaintext;
+  try {
+    if (!validDeviceKey(key)) throw new Error('Invalid device key.');
+    plaintext = new Uint8Array(await cryptoApi.subtle.decrypt({ name: 'AES-GCM', iv: decode(envelope.iv, 12), additionalData: deviceAdditionalData(envelope.keyId), tagLength: 128 }, key, decode(envelope.data)));
+    return validateState(JSON.parse(decoder.decode(plaintext)));
+  } catch {
+    throw new Error('The automatic encryption key is unavailable or the saved vault is damaged. Nothing was reset.');
   } finally {
     plaintext?.fill(0);
   }
