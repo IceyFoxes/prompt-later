@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { closeExtension, dueState, openExtension, tickFromPage } from './helpers.js';
+import { closeExtension, dueState, openExtension, readState, tickFromPage } from './helpers.js';
 
 async function withExtension(options, callback) {
   const environment = await openExtension(options);
@@ -28,7 +28,7 @@ test('R1 permission entry is requested in the Save click before the RPC and deni
         return false;
       };
       chrome.runtime.sendMessage = async message => {
-        entries.push({ type: 'rpc', action: message.action });
+        if (!['GET_STATE', 'GET_VAULT_STATUS'].includes(message.action)) entries.push({ type: 'rpc', action: message.action });
         return sendMessage.call(chrome.runtime, message);
       };
       window.__permissionEntries = entries;
@@ -37,13 +37,14 @@ test('R1 permission entry is requested in the Save click before the RPC and deni
     await page.locator('#when').selectOption('1m');
     await page.locator('#message').fill('Denied permission');
     await page.locator('#save').click();
+    await expect(page.locator('#save')).toBeEnabled();
     await expect(page.locator('.status')).toContainText('Nothing was scheduled');
     const entries = await page.evaluate(() => window.__permissionEntries);
     expect(entries[0].type).toBe('permission');
     expect(entries[0].active).toBe(true);
     expect(entries[0].details.origins).toEqual(['https://chatgpt.com/*']);
     expect(entries.some(entry => entry.action === 'UPSERT_JOB')).toBe(false);
-    const stored = await page.evaluate(async () => (await chrome.storage.local.get('prompt-later.v1'))['prompt-later.v1']);
+    const stored = await readState(page);
     expect(stored.jobs).toHaveLength(0);
   });
 });
@@ -66,7 +67,8 @@ test('R2 editing, delay defaults, recurrence anchors, deletion, and tab switchin
     await page.locator('#url').fill('https://chatgpt.com/c/default');
     await page.locator('#message').fill('Default delay');
     await page.locator('#save').click();
-    const first = await page.evaluate(async () => (await chrome.storage.local.get('prompt-later.v1'))['prompt-later.v1']);
+    await expect(page.locator('#save')).toBeEnabled();
+    const first = await readState(page);
     expect(first.jobs[0].schedule.at).toBeGreaterThanOrEqual(captured + 17995000);
     expect(first.jobs[0].schedule.at).toBeLessThanOrEqual(captured + 18005000);
     await page.reload();
@@ -75,7 +77,8 @@ test('R2 editing, delay defaults, recurrence anchors, deletion, and tab switchin
     await expect(page.locator('#once-zone')).toContainText('Times use');
     await page.locator('#message').fill('Updated');
     await page.locator('#save').click();
-    const updated = await page.evaluate(async () => (await chrome.storage.local.get('prompt-later.v1'))['prompt-later.v1']);
+    await expect(page.locator('#save')).toBeEnabled();
+    const updated = await readState(page);
     expect(updated.jobs).toHaveLength(1);
     expect(updated.jobs[0].message).toBe('Updated');
     await page.locator('[data-tab="recurring"]').click();
@@ -83,7 +86,8 @@ test('R2 editing, delay defaults, recurrence anchors, deletion, and tab switchin
     await page.locator('#message').fill('Every five hours');
     await expect(page.locator('#next-preview')).toContainText('Next occurrence');
     await page.locator('#save').click();
-    const withInterval = await page.evaluate(async () => (await chrome.storage.local.get('prompt-later.v1'))['prompt-later.v1']);
+    await expect(page.locator('#save')).toBeEnabled();
+    const withInterval = await readState(page);
     const interval = withInterval.jobs.find(job => job.url.endsWith('/interval'));
     expect(interval.nextRunAt).toBeGreaterThan(Date.now() + 17995000);
     expect(interval.nextRunAt).toBeLessThan(Date.now() + 18005000);
@@ -91,13 +95,14 @@ test('R2 editing, delay defaults, recurrence anchors, deletion, and tab switchin
     await expect(page.locator('#interval-hours')).toHaveValue('5');
     await page.locator('#message').fill('Every five hours edited');
     await page.locator('#save').click();
-    const afterEdit = await page.evaluate(async () => (await chrome.storage.local.get('prompt-later.v1'))['prompt-later.v1']);
+    await expect(page.locator('#save')).toBeEnabled();
+    const afterEdit = await readState(page);
     expect(afterEdit.jobs.find(job => job.url.endsWith('/interval')).schedule.anchor).toBe(interval.schedule.anchor);
     await page.getByRole('button', { name: 'Edit' }).click();
     await page.locator('[data-tab="send"]').click();
     await expect(page.locator('#save')).toHaveText('Save scheduled message');
     await saveJob(page, 'https://chatgpt.com/c/new-job', 'New job');
-    const state = await page.evaluate(async () => (await chrome.storage.local.get('prompt-later.v1'))['prompt-later.v1']);
+    const state = await readState(page);
     expect(state.jobs).toHaveLength(3);
     page.once('dialog', dialog => dialog.accept());
     await page.locator('[data-tab="recurring"]').click();
@@ -208,7 +213,7 @@ test('R7 alert after click is uncertain and the next tick does not retry', async
     await tickFromPage(page);
     await expect(page.locator('#job-list')).toContainText('Needs attention');
     const before = await provider.locator('#messages [data-message-author-role="user"]').count();
-    const state = await page.evaluate(async () => (await chrome.storage.local.get('prompt-later.v1'))['prompt-later.v1']);
+    const state = await readState(page);
     expect(state.history.at(-1).status).toBe('uncertain');
     expect(before).toBe(1);
     await tickFromPage(page);
@@ -329,13 +334,13 @@ test('R11 real MV3 alarm delivers after extension UI closes and deletion preserv
       if (candidate.url().startsWith(`chrome-extension://${id}/`)) await candidate.close();
     }
     await expect(provider.locator('[data-message-author-role="user"]')).toHaveText(message, { timeout: 45000 });
-    const delivered = await worker.evaluate(async () => (await chrome.storage.local.get('prompt-later.v1'))['prompt-later.v1']);
-    expect(delivered.jobs[0].status).toBe('completed');
-    expect(delivered.jobs[0].enabled).toBe(false);
-    expect(delivered.history.at(-1).status).toBe('sent');
     const dashboard = await context.newPage();
     await dashboard.goto(`chrome-extension://${id}/app.html`);
     await expect(dashboard.locator('#job-list')).toContainText(message);
+    const delivered = await readState(dashboard);
+    expect(delivered.jobs[0].status).toBe('completed');
+    expect(delivered.jobs[0].enabled).toBe(false);
+    expect(delivered.history.at(-1).status).toBe('sent');
     dashboard.once('dialog', dialog => dialog.accept());
     await dashboard.getByRole('button', { name: 'Delete' }).click();
     await dashboard.reload();

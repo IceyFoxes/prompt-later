@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fixtureForNew } from './provider-fixtures.js';
+import { buildSync } from 'esbuild';
 
 export const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -72,12 +73,17 @@ export function fixtureFor(host, options = {}) {
 export async function openExtension(options = {}) {
   const copy = fs.mkdtempSync(path.join(os.tmpdir(), 'prompt-later-extension-'));
   fs.cpSync(path.join(root, 'dist'), copy, { recursive: true });
+  buildSync({ entryPoints: [path.join(root, 'tests/browser/vault-fixture.js')], bundle: true, format: 'esm', platform: 'browser', target: 'chrome120', outfile: path.join(copy, 'vault-fixture.js') });
   const manifestPath = path.join(copy, 'manifest.json');
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
   manifest.host_permissions = manifest.optional_host_permissions;
   delete manifest.optional_host_permissions;
   fs.writeFileSync(manifestPath, JSON.stringify(manifest));
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'prompt-later-profile-'));
+  return launchExtension(copy, profile, options);
+}
+
+async function launchExtension(copy, profile, options) {
   const context = await chromium.launchPersistentContext(profile, {
     channel: 'chromium',
     headless: true,
@@ -101,7 +107,20 @@ export async function openExtension(options = {}) {
   const id = new URL(worker.url()).hostname;
   const page = await context.newPage();
   await page.goto(`chrome-extension://${id}/${options.path || 'app.html'}`);
-  return { context, page, worker, id, copy, profile };
+  if (options.setupVault !== false) {
+    await page.locator('#vault-passphrase').fill('Synthetic vault passphrase');
+    await page.locator('#vault-confirm').fill('Synthetic vault passphrase');
+    await page.locator('#vault-submit').click();
+    await page.locator('#scheduler-view').waitFor({ state: 'visible' });
+  }
+  return { context, page, worker, id, copy, profile, options };
+}
+
+export async function restartExtension(environment) {
+  await environment.context.close();
+  const next = await launchExtension(environment.copy, environment.profile, { ...environment.options, setupVault: false });
+  Object.assign(environment, next);
+  return environment;
 }
 
 export async function closeExtension(environment) {
@@ -111,47 +130,41 @@ export async function closeExtension(environment) {
 }
 
 export async function tickFromPage(page) {
-  const pageUrl = new URL(page.url());
-  const origin = pageUrl.origin === 'null'
-    ? `${pageUrl.protocol}//${pageUrl.host}`
-    : pageUrl.origin;
-  let worker = page.context().serviceWorkers().find(candidate => candidate.url().startsWith(`${origin}/`));
-  if (!worker) {
-    worker = await page.context().waitForEvent('serviceworker', {
-      predicate: candidate => candidate.url().startsWith(`${origin}/`),
-    });
+  const revision = () => page.evaluate(async () => (await chrome.storage.local.get('prompt-later.vault.v1'))['prompt-later.vault.v1']?.iv);
+  const before = await revision();
+  await page.evaluate(() => chrome.alarms.create('prompt-later:due', { when: Date.now() }));
+  const deadline = Date.now() + 25000;
+  while (Date.now() < deadline) {
+    const stored = await readState(page);
+    const changed = await revision() !== before;
+    const busy = stored.jobs.some(job => job.status === 'running');
+    const due = stored.jobs.some(job => job.enabled && job.status === 'scheduled' && job.nextRunAt <= Date.now());
+    if (changed && !busy && !due) return stored;
+    await new Promise(resolve => setTimeout(resolve, 100));
   }
-  try {
-    return await worker.evaluate(async () => {
-      const module = await import(chrome.runtime.getURL('worker.js'));
-      await module.ready;
-      return module.scheduler.tick();
-    });
-  } catch (error) {
-    if (!String(error?.message || error).includes('import() is disallowed')) throw error;
-    return worker.evaluate(async () => {
-      const initial = (await chrome.storage.local.get('prompt-later.v1'))['prompt-later.v1'];
-      chrome.alarms.create('prompt-later:due', { when: Date.now() });
-      const started = Date.now();
-      while (Date.now() - started < 25000) {
-        const stored = (await chrome.storage.local.get('prompt-later.v1'))['prompt-later.v1'];
-        const changed = stored?.history?.length > initial?.history?.length
-          || stored?.jobs?.some((job, index) => job.status !== initial?.jobs?.[index]?.status);
-        const running = stored?.jobs?.some(job => job.status === 'running');
-        if (!running && (changed || initial?.jobs?.every(job => job.status !== 'scheduled'))) return stored;
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-      throw new Error('Prompt Later alarm did not drain the due fixture.');
-    });
-  }
+  throw new Error('Prompt Later alarm did not drain the due fixture.');
+}
+
+export async function readState(page) {
+  return page.evaluate(async () => {
+    const module = await import(chrome.runtime.getURL('vault-fixture.js'));
+    return module.readState();
+  });
+}
+
+export async function writeState(page, state) {
+  return page.evaluate(async value => {
+    const module = await import(chrome.runtime.getURL('vault-fixture.js'));
+    return module.writeState(value);
+  }, state);
 }
 
 export async function dueState(page, predicate = () => true) {
-  const state = await page.evaluate(async () => (await chrome.storage.local.get('prompt-later.v1'))['prompt-later.v1']);
+  const state = await readState(page);
   const job = state.jobs.find(predicate);
   if (!job) throw new Error('Fixture job not found.');
   const dueAt = Date.now() - 1000;
   job.nextRunAt = dueAt;
   if (job.schedule.type === 'once') job.schedule.at = dueAt;
-  await page.evaluate(value => chrome.storage.local.set({ 'prompt-later.v1': value }), state);
+  await writeState(page, state);
 }

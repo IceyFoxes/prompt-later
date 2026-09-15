@@ -13,6 +13,9 @@ const state = {
   popup: params.get('popup') === '1',
   sourceTabId: params.has('sourceTabId') && Number.isInteger(Number(params.get('sourceTabId'))) && Number(params.get('sourceTabId')) > 0 ? Number(params.get('sourceTabId')) : null,
   pending: false,
+  vault: null,
+  vaultPending: false,
+  loadGeneration: 0,
 };
 
 function send(action, payload = {}) {
@@ -34,6 +37,10 @@ function localValue(timestamp) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+function isUnlocked() {
+  return state.vault?.configured === true && state.vault.locked === false;
+}
+
 function setStatus(value, error = false) {
   text($('form-status'), value);
   $('form-status').className = `status ${error ? 'error' : 'success'}`;
@@ -41,9 +48,10 @@ function setStatus(value, error = false) {
 
 function setPending(value) {
   state.pending = value;
-  $('save').disabled = value || !extension;
-  $('check').disabled = value || !extension;
-  $('current-tab').disabled = value || !extension;
+  const disabled = value || !extension || !isUnlocked();
+  $('save').disabled = disabled;
+  $('check').disabled = disabled;
+  $('current-tab').disabled = disabled;
 }
 
 function showTarget(target) {
@@ -359,20 +367,102 @@ function renderJobs() {
   }
 }
 
+function clearSchedulerView() {
+  state.data = { jobs: [], history: [] };
+  state.pending = false;
+  clearForm();
+  setStatus('');
+  renderJobs();
+}
+
+function renderVault(status, error = '') {
+  const locked = Boolean(error) || !status || status.locked;
+  state.vault = status ? { ...status, locked } : null;
+  const configured = status?.configured === true;
+  $('vault-panel').hidden = !locked;
+  $('scheduler-view').hidden = locked;
+  $('vault-confirm-field').hidden = configured || !status;
+  $('vault-confirm').required = Boolean(status && !configured);
+  $('vault-passphrase').autocomplete = configured ? 'current-password' : 'new-password';
+  $('vault-title').textContent = !status ? 'Saved data unavailable' : configured ? 'Unlock Prompt Later' : 'Protect your saved messages';
+  $('vault-description').textContent = !status ? 'Close and reopen Prompt Later to try again. Saved data has not been reset.' : configured
+    ? 'Scheduled messages are paused while locked.'
+    : 'Create a local passphrase to encrypt saved messages, conversation URLs, schedules, and activity. Existing saved data is migrated only after the encrypted copy is verified.';
+  $('vault-submit').textContent = configured ? 'Unlock and resume' : 'Encrypt and resume';
+  $('vault-submit').disabled = !extension || !status || state.vaultPending;
+  $('vault-passphrase').disabled = !extension || !status || state.vaultPending;
+  $('vault-confirm').disabled = !extension || !status || state.vaultPending;
+  text($('vault-status'), error);
+  if (locked) clearSchedulerView();
+  setPending(state.pending);
+}
+
+async function vaultSubmit(event) {
+  event.preventDefault();
+  if (state.vaultPending || !state.vault || !extension) return;
+  const passphrase = $('vault-passphrase').value;
+  const confirmation = $('vault-confirm').value;
+  const configured = state.vault.configured;
+  $('vault-passphrase').value = '';
+  $('vault-confirm').value = '';
+  if (!configured && passphrase !== confirmation) {
+    text($('vault-status'), 'Passphrases do not match.');
+    return;
+  }
+  state.vaultPending = true;
+  renderVault(state.vault);
+  let failure = '';
+  try {
+    const result = await send(configured ? 'UNLOCK_VAULT' : 'SETUP_VAULT', { passphrase });
+    if (!result?.ok) throw new Error(result?.error || 'Vault request failed.');
+  } catch (error) {
+    failure = error?.message || 'Vault request failed.';
+  } finally {
+    state.vaultPending = false;
+  }
+  await load();
+  if (failure) {
+    if (!isUnlocked()) renderVault(state.vault, failure);
+    else setStatus(failure, true);
+  }
+}
+
 async function load() {
-  const result = await send('GET_STATE');
-  if (result.ok) {
-    state.data = result.data;
+  const generation = ++state.loadGeneration;
+  let status = null;
+  try {
+    const result = await send('GET_VAULT_STATUS');
+    if (generation !== state.loadGeneration) return;
+    if (!result?.ok) throw new Error(result?.error || 'Could not read vault status.');
+    status = result.data;
+    if (!status || typeof status.configured !== 'boolean' || typeof status.locked !== 'boolean') throw new Error('The vault status is unreadable.');
+    if (status.locked) {
+      renderVault(status);
+      return;
+    }
+    const data = await send('GET_STATE');
+    if (generation !== state.loadGeneration) return;
+    if (!data?.ok) throw new Error(data?.error || 'Could not read saved messages.');
+    const captureSource = !isUnlocked() && (state.popup || state.sourceTabId);
+    state.data = data.data;
+    renderVault(status);
     renderJobs();
-  } else {
-    setStatus(result.error, true);
-    if (!extension) $('preview-note').hidden = false;
+    if (captureSource) await currentTab();
+  } catch (error) {
+    if (generation === state.loadGeneration) renderVault(status, error?.message || 'Could not read saved messages.');
   }
 }
 
 async function currentTab() {
-  const result = await send('CURRENT_TAB', { sourceTabId: state.sourceTabId });
-  if (!result.ok || !result.data?.url) return;
+  if (!isUnlocked()) return;
+  let result;
+  try {
+    result = await send('CURRENT_TAB', { sourceTabId: state.sourceTabId });
+  } catch {
+    await load();
+    return;
+  }
+  if (!result.ok || !result.data?.url || !isUnlocked()) return;
   state.sourceTabId = result.data.id;
   try {
     const target = parseTarget(result.data.url);
@@ -390,7 +480,7 @@ async function requestAccess(target, denialMessage) {
 }
 
 async function checkPage() {
-  if (state.pending) return;
+  if (state.pending || !isUnlocked()) return;
   try {
     const target = parseTarget($('url').value);
     setPending(true);
@@ -408,11 +498,12 @@ async function checkPage() {
 
 async function save(event) {
   event.preventDefault();
-  if (state.pending) return;
+  if (state.pending || !isUnlocked()) return;
   try {
     const payload = readForm();
     const target = parseTarget(payload.url);
     setPending(true);
+    setStatus('Saving message…');
     await requestAccess(target, 'Site access was not granted. Nothing was scheduled.');
     const result = await send('UPSERT_JOB', payload);
     if (!result.ok) throw new Error(result.error);
@@ -450,6 +541,7 @@ function switchTab(event) {
 }
 
 document.querySelectorAll('[role="tab"]').forEach(tab => tab.addEventListener('click', switchTab));
+$('vault-form').addEventListener('submit', vaultSubmit);
 form.addEventListener('submit', save);
 $('current-tab').addEventListener('click', currentTab);
 $('check').addEventListener('click', checkPage);
@@ -462,7 +554,9 @@ $('recurring-time').addEventListener('input', previewSchedule);
 $('cron').addEventListener('input', previewSchedule);
 $('timezone').addEventListener('input', previewSchedule);
 $('url').addEventListener('input', updateTargetPreview);
-if (extension) chrome.storage.onChanged.addListener(load);
+if (extension) chrome.storage.onChanged.addListener((changes, area) => {
+  if ((area === 'local' || area === 'session') && Object.keys(changes).some(key => ['prompt-later.vault.v1', 'prompt-later.vault-session.v1', 'prompt-later.v1'].includes(key))) load();
+});
 else {
   $('preview-note').hidden = false;
   $('save').disabled = true;
@@ -472,9 +566,7 @@ if (state.popup) document.body.classList.add('popup');
 populateTimezones();
 clearForm();
 renderTabs();
-load().then(() => {
-  if (state.popup || state.sourceTabId) return currentTab();
-});
+load();
 setInterval(() => {
   document.querySelectorAll('[data-next]').forEach(node => {
     if (node.dataset.next) {

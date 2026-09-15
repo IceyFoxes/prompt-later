@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { EDITOR_MESSAGE, insertTiptapText } from '../../src/page-editor.js';
-import { closeExtension, dueState, openExtension, tickFromPage } from './helpers.js';
+import { closeExtension, dueState, openExtension, readState, tickFromPage } from './helpers.js';
 
 const providers = [
   { id: 'gemini', label: 'Gemini', target: 'https://gemini.google.com/app/0123456789abcdef', other: 'https://gemini.google.com/app/22345678abcdef01', editor: '.ql-editor', user: 'user-query' },
@@ -46,7 +46,7 @@ async function runDue(page) {
 }
 
 async function stored(page) {
-  return page.evaluate(async () => (await chrome.storage.local.get('prompt-later.v1'))['prompt-later.v1']);
+  return readState(page);
 }
 
 async function editorText(target, selector) {

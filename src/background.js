@@ -1,12 +1,13 @@
 import { Scheduler } from './scheduler.js';
-import { createChromeStore } from './store.js';
+import { createVaultStore } from './vault.js';
 import { createDelivery, inspectTarget } from './transport.js';
 import { isUiSender, UI_MESSAGE } from './protocol.js';
 import { parseTarget } from './targets.js';
 import { EDITOR_MESSAGE, editorJobFor, insertTiptapText } from './page-editor.js';
+import { VaultLockedError } from './vault-crypto.js';
 
 const api = globalThis.chrome;
-const store = api ? createChromeStore(api) : null;
+const store = api ? createVaultStore(api) : null;
 const deliver = api ? createDelivery(api) : null;
 export const scheduler = api
   ? new Scheduler({
@@ -19,9 +20,8 @@ export const scheduler = api
   : null;
 
 async function accessLevel() {
-  if (api?.storage?.local?.setAccessLevel) {
-    await api.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
-  }
+  if (api?.storage?.local?.setAccessLevel) await api.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
+  if (api?.storage?.session?.setAccessLevel) await api.storage.session.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
 }
 
 async function permissionGranted(target) {
@@ -33,7 +33,7 @@ function reply(sendResponse, data) {
 }
 
 function fail(sendResponse, error) {
-  sendResponse({ ok: false, error: error?.message || 'Request failed.' });
+  sendResponse({ ok: false, error: error?.message || 'Request failed.', ...(error?.code === 'VAULT_LOCKED' ? { code: error.code } : {}) });
 }
 
 function reportError() {
@@ -41,18 +41,27 @@ function reportError() {
   Promise.resolve(api?.action?.setBadgeText?.({ text: '!' })).catch(() => {});
 }
 
-export const ready = scheduler
-  ? (async () => {
-      await accessLevel();
-      await scheduler.initialize();
-    })()
-  : Promise.resolve();
+export const ready = scheduler ? accessLevel() : Promise.resolve();
+let initialization;
+async function activeScheduler() {
+  await ready;
+  if ((await store.status()).locked) {
+    scheduler.state = null;
+    scheduler.initialized = false;
+    throw new VaultLockedError();
+  }
+  if (!scheduler.initialized) {
+    initialization ||= scheduler.initialize().finally(() => { initialization = null; });
+    await initialization;
+  }
+  return scheduler;
+}
 
 if (api) {
   api.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message?.type === EDITOR_MESSAGE) {
       (async () => {
-        await ready;
+        await activeScheduler();
         const job = editorJobFor(message, sender, await scheduler.getState(), api.runtime.id);
         if (!job || !(await permissionGranted(parseTarget(job.url)))) throw new Error('This editor request is not authorized for an active delivery.');
         const result = await api.scripting.executeScript({
@@ -70,6 +79,16 @@ if (api) {
     (async () => {
       await ready;
       const payload = message.payload || {};
+      if (message.action === 'GET_VAULT_STATUS') return reply(sendResponse, await store.status());
+      if (message.action === 'SETUP_VAULT' || message.action === 'UNLOCK_VAULT') {
+        if (message.action === 'SETUP_VAULT') await store.setup(payload.passphrase);
+        else await store.unlock(payload.passphrase);
+        await activeScheduler();
+        reply(sendResponse, await store.status());
+        runTick();
+        return;
+      }
+      await activeScheduler();
       if (message.action === 'GET_STATE') {
         return reply(sendResponse, await scheduler.getState());
       }
@@ -109,7 +128,22 @@ if (api) {
     return true;
   });
 
-  const runTick = () => ready.then(() => scheduler.tick()).catch(reportError);
+  const runTick = () => ready.then(async () => {
+    const vaultStatus = await store.status();
+    if (vaultStatus.locked) {
+      await api.alarms.clear('prompt-later:due');
+      await api.action.setBadgeText({ text: 'LOCK' });
+      scheduler.state = null;
+      scheduler.initialized = false;
+      return;
+    }
+    await activeScheduler();
+    await scheduler.tick();
+    await api.action.setBadgeText({ text: '' });
+  }).catch(error => {
+    if (error?.code === 'VAULT_LOCKED') return;
+    reportError(error);
+  });
   ready.then(runTick).catch(reportError);
   api.alarms.onAlarm.addListener(alarm => {
     if (alarm.name === 'prompt-later:due') runTick();

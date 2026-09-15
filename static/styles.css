@@ -1,5 +1,9 @@
 :root { --bg:#f6f7fb; --surface:#fff; --text:#172034; --muted:#67738b; --accent:#5b55e7; --border:#e2e5ef; --danger:#b42318; --success:#13795b; }
 * { box-sizing:border-box; }
+[hidden] { display:none !important; }
+.vault-panel { max-width:520px; margin:0 auto 18px; }
+#vault-status { min-height:20px; color:var(--danger); }
+.warning { color:var(--danger); font-size:12px; }
 body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
 button,input,textarea,select { font:inherit; }
 button,a { -webkit-tap-highlight-color:transparent; }
