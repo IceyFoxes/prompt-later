@@ -8,6 +8,10 @@ ROOT = Path(__file__).resolve().parent.parent
 EXPECTED_FILES = {
     'manifest.json', 'app.html', 'styles.css', 'app.js', 'content.js', 'worker.js',
     'icons/icon16.png', 'icons/icon32.png', 'icons/icon48.png', 'icons/icon128.png',
+    # Manrope is bundled rather than fetched so the dashboard renders offline and
+    # requests no third party at runtime. OFL clause 2 requires the licence to
+    # travel with the font, so it ships as a stand-alone text file beside it.
+    'fonts/Manrope-Variable.ttf', 'fonts/OFL.txt',
 }
 
 
