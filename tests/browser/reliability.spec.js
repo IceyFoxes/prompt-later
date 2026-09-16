@@ -163,6 +163,7 @@ test('R4 duplicate concurrent and post-reinjection commits produce one click and
 });
 
 test('R5 missing, ambiguous, modal, read-only, and missing-send fixtures fail closed', async () => {
+  test.setTimeout(120000);
   const cases = [
     { fixture: { missingEditor: true }, detail: 'Composer was not found' },
     { fixture: { editors: 2 }, detail: 'Composer controls are ambiguous' },

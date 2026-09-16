@@ -67,6 +67,45 @@ export function fixtureFor(host, options = {}) {
       ${alertScript}
     }));
   `;
+  // Models how ChatGPT and Claude really behave: the send control is rendered
+  // from the composer framework's own state, and that state is seeded empty when
+  // the framework attaches - it does not adopt text already sitting in the DOM.
+  // `hydrateOnDemand` defers that attachment to window.__hydrate() so a test can
+  // place it after insertion. `detachedComposer` additionally keeps the composer
+  // out of any form/main, so the send control only turns up in a shared ancestor.
+  if (options.hydrateOnDemand || options.detachedComposer) {
+    const sendHtml = options.missingSend ? '' : `<button ${sendAttribute}>${sendLabel}</button>`;
+    const body = options.detachedComposer
+      ? `<main><div id="messages"></div></main><div id="composer-root"><div id="composer-input">${editorMarkup}${modal}</div><div id="composer-actions"></div></div>`
+      : `<main>${editorMarkup}${modal}<div id="composer-actions"></div><div id="messages"></div></main>`;
+    return `<!doctype html><html><body>${body}<script>
+      const editor = document.querySelector('textarea,[contenteditable="true"]');
+      const read = () => editor?.value === undefined ? editor?.innerText || '' : editor?.value || '';
+      const row = document.querySelector('#composer-actions');
+      let stateText = '';
+      const sync = () => {
+        const existing = row.querySelector('button');
+        if (!stateText.trim()) { if (existing) existing.remove(); return; }
+        if (existing) return;
+        row.insertAdjacentHTML('beforeend', ${JSON.stringify(sendHtml)});
+        const button = row.querySelector('button');
+        if (button) button.addEventListener('click', () => {
+          ${ackScript}
+          ${clearScript}
+          stateText = read();
+          sync();
+          ${alertScript}
+        });
+      };
+      const attach = () => {
+        editor.addEventListener('input', () => { stateText = read(); sync(); });
+        window.__fixtureHydrated = true;
+        sync();
+      };
+      if (${Boolean(options.hydrateOnDemand)}) window.__hydrate = attach;
+      else window.addEventListener('load', attach);
+    </script></body></html>`;
+  }
   if (options.composerDelayMs > 0) {
     const markup = `${editorMarkup}${modal}${sendMarkup}<div id="messages"></div>`;
     const remount = Number(options.composerRemountMs) || 0;

@@ -89,6 +89,26 @@ function scopeFor(composer, provider) {
   return fallback === document.body || fallback === document.documentElement ? null : fallback;
 }
 
+function sendScopes(composer, provider) {
+  const config = PROVIDERS[provider];
+  const scopes = [];
+  const primary = scopeFor(composer, provider);
+  if (primary) scopes.push(primary);
+  // A hydrating page often mounts the send control in a subtree that is not the
+  // composer's own form/main, so widen to the nearest ancestor that actually
+  // holds a send candidate before giving up.
+  for (let node = composer.parentElement, depth = 0;
+    node && node !== document.body && node !== document.documentElement && depth < 8;
+    node = node.parentElement, depth += 1) {
+    if (scopes.includes(node)) continue;
+    if (config.selectors.sends.some(selector => node.querySelector(selector))) {
+      scopes.push(node);
+      break;
+    }
+  }
+  return scopes;
+}
+
 function accessibleLabel(button) {
   return (button.getAttribute('aria-label') || button.textContent || '').trim();
 }
@@ -102,21 +122,30 @@ function sendEnabled(provider, element) {
     && !/^(stop|stop generating|stop response|stop responding|cancel|attach|upload|voice)$/i.test(accessibleLabel(element));
 }
 
-function sendButton(provider, composer) {
-  const scope = scopeFor(composer, provider);
-  if (!scope) return null;
-  for (const selector of SELECTORS[provider].sends) {
-    const candidates = [...scope.querySelectorAll(selector)].filter(isVisible);
-    if (candidates.length > 1) throw new Error('Send controls are ambiguous.');
-    if (candidates.length === 1) return sendEnabled(provider, candidates[0]) ? candidates[0] : null;
+function sendButton(provider, composer, info) {
+  const scopes = sendScopes(composer, provider);
+  for (const [index, scope] of scopes.entries()) {
+    for (const selector of SELECTORS[provider].sends) {
+      const candidates = [...scope.querySelectorAll(selector)].filter(isVisible);
+      if (candidates.length > 1) throw new Error('Send controls are ambiguous.');
+      // A single disabled match must not end the search: later selectors or a
+      // wider scope may hold the control the page actually wired up.
+      if (candidates.length === 1) {
+        if (sendEnabled(provider, candidates[0])) return candidates[0];
+        if (info) info.disabled = true;
+      }
+    }
+    if (index > 0) continue;
+    const fallback = [...scope.querySelectorAll('button')]
+      .filter(isVisible)
+      .filter(button => /^(send|send message|send prompt|submit message)$/i.test(accessibleLabel(button)));
+    if (fallback.length > 1) throw new Error('Send controls are ambiguous.');
+    if (fallback.length === 1) {
+      if (sendEnabled(provider, fallback[0])) return fallback[0];
+      if (info) info.disabled = true;
+    }
   }
-  const form = composer.closest('form');
-  if (!form) return null;
-  const fallback = [...form.querySelectorAll('button')]
-    .filter(isVisible)
-    .filter(button => /^(send|send message|send prompt|submit message)$/i.test(accessibleLabel(button)));
-  if (fallback.length > 1) throw new Error('Send controls are ambiguous.');
-  return fallback.length === 1 && sendEnabled(provider, fallback[0]) ? fallback[0] : null;
+  return null;
 }
 
 function alertState() {
@@ -270,14 +299,62 @@ function insert(composer, message) {
   return normalized(textOf(composer)) === normalized(message);
 }
 
-async function waitForButton(provider, composer) {
+// A tab that was just reopened finishes loading before its composer framework
+// finishes attaching. Text written in that window lands in the DOM but never
+// reaches the framework's own state, so the send control - which these sites
+// render or enable from that state - never appears. Replay the edit so a
+// late-attached framework observes it, without ever changing the final text.
+function renotify(composer, message) {
+  try {
+    composer.focus();
+    if (composer instanceof HTMLTextAreaElement || composer instanceof HTMLInputElement) {
+      const setter = Object.getOwnPropertyDescriptor(composer.constructor.prototype, 'value')?.set
+        || Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+      setter.call(composer, message);
+      composer.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: message }));
+      composer.dispatchEvent(new Event('change', { bubbles: true }));
+    } else {
+      const selection = getSelection();
+      selection.removeAllRanges();
+      const range = document.createRange();
+      range.selectNodeContents(composer);
+      range.collapse(false);
+      selection.addRange(range);
+      const before = textOf(composer);
+      document.execCommand('insertText', false, ' ');
+      if (textOf(composer) !== before) document.execCommand('delete');
+    }
+  } catch { /* fall through to the text check below */ }
+  return normalized(textOf(composer)) === normalized(message);
+}
+
+async function waitForButton(provider, composer, message) {
   const started = Date.now();
-  while (Date.now() - started < 3000) {
-    const button = sendButton(provider, composer);
-    if (button) return button;
+  const info = { disabled: false };
+  let ambiguous = null;
+  let nudges = 0;
+  // Bounded so that this wait plus the acknowledgement poll stays inside the
+  // page-call timeout: overrunning it would turn a clean 'blocked' into
+  // 'uncertain'.
+  while (Date.now() - started < 6000) {
+    info.disabled = false;
+    try {
+      const button = sendButton(provider, composer, info);
+      if (button) return { button, disabled: false };
+      ambiguous = null;
+    } catch (error) {
+      // Duplicate controls are common while a page hydrates; only report the
+      // ambiguity if it is still there when the budget runs out.
+      ambiguous = error;
+    }
+    if (Date.now() - started >= (nudges + 1) * 1000 && nudges < 5) {
+      nudges += 1;
+      if (!renotify(composer, message)) break;
+    }
     await new Promise(resolve => setTimeout(resolve, 50));
   }
-  return null;
+  if (ambiguous) throw ambiguous;
+  return { button: null, disabled: info.disabled };
 }
 
 async function commit(provider, url, runId, message, record) {
@@ -295,11 +372,16 @@ async function commit(provider, url, runId, message, record) {
     ? await insertPageEditor(composer, message, runId, url)
     : insert(composer, message);
   if (!inserted) throw new Error('Message insertion was not acknowledged; the message remains in the composer.');
-  const button = await waitForButton(provider, composer);
-  if (!button) throw new Error('The explicit send control was not found; the message remains in the composer.');
+  const { button, disabled } = await waitForButton(provider, composer, message);
+  if (!button) {
+    throw new Error(disabled
+      ? 'The send control stayed disabled; the message remains in the composer.'
+      : 'The explicit send control was not found; the message remains in the composer.');
+  }
   if (!targetMatches(url) || !composer.isConnected || editor(provider) !== composer
       || normalized(textOf(composer)) !== normalized(message) || busy(provider) || attachments(provider, composer) || alertState()
-      || (PROVIDERS[provider].enhanced && (!sendEnabled(provider, button) || sendButton(provider, composer) !== button))) {
+      || !sendEnabled(provider, button)
+      || (PROVIDERS[provider].enhanced && sendButton(provider, composer) !== button)) {
     throw new Error('The page changed before sending; the message remains in the composer.');
   }
   record.clicked = true;

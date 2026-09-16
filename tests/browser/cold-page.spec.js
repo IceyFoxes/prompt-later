@@ -170,3 +170,88 @@ test('cold Check page waits for the composer but never types or sends', async ()
     expect((await readState(page)).jobs).toHaveLength(0);
   });
 });
+
+
+
+function injectInto(page, target) {
+  return page.evaluate(async target => {
+    const tabs = await chrome.tabs.query({ url: `${new URL(target).origin}/*` });
+    const tab = tabs.find(candidate => candidate.url === target);
+    if (!tab) throw new Error('Fixture tab was not found.');
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id, frameIds: [0] },
+      files: ['content.js'],
+      world: 'ISOLATED',
+    });
+    return tab.id;
+  }, target);
+}
+
+function call(page, tabId, type, target, text, extra = {}) {
+  return page.evaluate(({ tabId, type, target, text, extra }) => chrome.tabs.sendMessage(tabId, {
+    type,
+    runId: 'late-hydration-run',
+    url: target,
+    message: text,
+    ...extra,
+  }), { tabId, type, target, text, extra });
+}
+
+// Regression for a reopened tab: the composer paints and accepts text before its
+// framework attaches, so the framework's state stays empty and the send control
+// it renders from that state never appears. Waiting alone cannot fix this - the
+// insertion has to be replayed once the framework is listening.
+for (const provider of [
+  { name: 'ChatGPT', target: 'https://chatgpt.com/c/late-hydration', user: '[data-message-author-role="user"]', draft: () => document.querySelector('#prompt-textarea').value },
+  { name: 'Claude', target: 'https://claude.ai/chat/late-hydration', user: '[data-testid="user-message"]', draft: () => document.querySelector('[data-testid="chat-input"]').innerText },
+]) {
+  test(`${provider.name} sends when its composer framework attaches after insertion`, async () => {
+    await withExtension({ hydrateOnDemand: true }, async ({ page, context }) => {
+      const text = `Late hydration ${provider.name}`;
+      const target = await context.newPage();
+      await target.goto(provider.target);
+      const tabId = await injectInto(page, provider.target);
+      expect(await call(page, tabId, 'PL_PREPARE', provider.target, text, { waitForComposer: true })).toMatchObject({ ready: true });
+      const committing = call(page, tabId, 'PL_COMMIT', provider.target, text);
+      await expect.poll(() => target.evaluate(provider.draft)).toContain(text);
+      // The text is in the DOM, the framework is still absent, no send control.
+      expect(await target.evaluate(() => window.__fixtureHydrated)).toBeUndefined();
+      await expect(target.locator('#composer-actions button')).toHaveCount(0);
+      await target.evaluate(() => window.__hydrate());
+      expect(await target.evaluate(() => window.__fixtureHydrated)).toBe(true);
+      expect(await committing).toMatchObject({ outcome: 'sent' });
+      await expect(target.locator(provider.user)).toHaveText(text);
+      await expect(target.locator(provider.user)).toHaveCount(1);
+    });
+  });
+
+  test(`${provider.name} finds a send control that sits outside the composer subtree`, async () => {
+    await withExtension({ detachedComposer: true }, async ({ page, context }) => {
+      const text = `Detached composer ${provider.name}`;
+      const target = await context.newPage();
+      await target.goto(provider.target);
+      expect(await target.evaluate(() => !document.querySelector('#composer-input').closest('form, main'))).toBe(true);
+      const tabId = await injectInto(page, provider.target);
+      expect(await call(page, tabId, 'PL_PREPARE', provider.target, text, { waitForComposer: true })).toMatchObject({ ready: true });
+      expect(await call(page, tabId, 'PL_COMMIT', provider.target, text)).toMatchObject({ outcome: 'sent' });
+      await expect(target.locator(provider.user)).toHaveText(text);
+      await expect(target.locator(provider.user)).toHaveCount(1);
+    });
+  });
+}
+
+test('a composer framework that never attaches fails closed and keeps the message', async () => {
+  await withExtension({ hydrateOnDemand: true }, async ({ page, context }) => {
+    const text = 'Never hydrated prompt';
+    const target = await context.newPage();
+    await target.goto(url);
+    const tabId = await injectInto(page, url);
+    expect(await call(page, tabId, 'PL_PREPARE', url, text, { waitForComposer: true })).toMatchObject({ ready: true });
+    const result = await call(page, tabId, 'PL_COMMIT', url, text);
+    expect(result).toMatchObject({ outcome: 'blocked' });
+    expect(result.detail).toContain('explicit send control was not found');
+    // Fail closed: nothing sent, and the replayed insertion left the text intact.
+    await expect(target.locator('[data-message-author-role="user"]')).toHaveCount(0);
+    await expect(target.locator('#prompt-textarea')).toHaveValue(text);
+  });
+});
