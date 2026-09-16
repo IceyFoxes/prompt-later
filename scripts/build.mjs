@@ -8,6 +8,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dist = path.join(root, 'dist');
 fs.rmSync(dist, { recursive: true, force: true });
 fs.mkdirSync(path.join(dist, 'icons'), { recursive: true });
+fs.cpSync(path.join(root, 'static/fonts'), path.join(dist, 'fonts'), { recursive: true });
 
 for (const file of ['app.html', 'styles.css']) {
   fs.copyFileSync(path.join(root, 'static', file), path.join(dist, file));

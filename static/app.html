@@ -3,90 +3,128 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#6957ed">
   <title>Prompt Later</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <main class="shell">
     <header class="topbar">
-      <div class="brand"><span class="clock" aria-hidden="true"></span><strong>Prompt Later</strong><span class="badge">Local only</span></div>
-      <a id="dashboard-link" href="app.html">Open dashboard</a>
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"><span class="clock"></span></span>
+        <span class="brand-copy"><strong>Prompt Later</strong><span>Messages, right on time</span></span>
+        <span class="badge"><span class="badge-dot" aria-hidden="true"></span>Local only</span>
+      </div>
+      <a id="dashboard-link" class="dashboard-link" href="app.html">Open dashboard <span aria-hidden="true">↗</span></a>
     </header>
-    <div id="preview-note" class="notice" hidden>Load this folder as a Chrome/Edge extension to schedule messages.</div>
-    <section id="vault-panel" class="panel vault-panel" aria-labelledby="vault-title" hidden>
-      <h2 id="vault-title">Saved data unavailable</h2>
-      <p id="vault-description">Try again to open your saved data. Nothing has been reset.</p>
+
+    <div id="preview-note" class="notice" hidden><span class="notice-icon" aria-hidden="true">i</span><span>Load this folder as a Chrome/Edge extension to schedule messages.</span></div>
+
+    <section id="vault-panel" class="panel gate-panel vault-panel" aria-labelledby="vault-title" hidden>
+      <div class="gate-icon lock-icon" aria-hidden="true"></div>
+      <div class="gate-copy"><p class="eyebrow">Private by design</p><h1 id="vault-title">Saved data unavailable</h1><p id="vault-description">Try again to open your saved data. Nothing has been reset.</p></div>
       <form id="vault-form" hidden>
         <div class="field"><label for="vault-passphrase">Passphrase</label><input id="vault-passphrase" type="password" minlength="12" maxlength="1024" required autocomplete="current-password" disabled></div>
         <button class="primary" id="vault-submit" type="submit" disabled>Unlock and resume</button>
       </form>
-      <p id="vault-status" role="status"></p>
+      <p id="vault-status" class="status" role="status"></p>
       <button class="secondary" id="vault-retry" type="button" hidden>Try again</button>
-      <div id="vault-help" hidden>
-        <p class="hint">Unlock again after a browser restart or extension update. While unlocked, sending can continue with the popup closed and monitor off.</p>
-        <p class="hint">Unlocking resumes schedules and applies each job’s late policy; overdue messages may send immediately.</p>
+      <div id="vault-help" class="gate-help" hidden>
+        <p>Unlock again after a browser restart or extension update. While unlocked, sending can continue with the popup closed and monitor off.</p>
+        <p>Unlocking resumes schedules and applies each job’s late policy; overdue messages may send immediately.</p>
         <p class="warning">This passphrase cannot be recovered. Store it somewhere safe. Removing the extension deletes its saved data.</p>
       </div>
     </section>
-    <section id="permission-panel" class="panel permission-panel" aria-labelledby="permission-title" hidden>
-      <div class="permission-eyebrow">Provider access</div>
-      <h2 id="permission-title">Checking site access…</h2>
-      <p id="permission-description">Checking whether Prompt Later can use the selected conversation.</p>
-      <div id="permission-actions" class="actions" hidden>
-        <button id="permission-allow" class="primary" type="button">Allow site access</button>
-        <button id="permission-dismiss" class="secondary" type="button">Choose another conversation</button>
-      </div>
+
+    <section id="permission-panel" class="panel gate-panel permission-panel" aria-labelledby="permission-title" hidden>
+      <div class="gate-icon access-icon" aria-hidden="true"></div>
+      <div class="gate-copy"><p class="eyebrow">Provider access</p><h1 id="permission-title">Checking site access…</h1><p id="permission-description">Checking whether Prompt Later can use the selected conversation.</p></div>
+      <div id="permission-actions" class="actions" hidden><button id="permission-allow" class="primary" type="button">Allow site access</button><button id="permission-dismiss" class="secondary" type="button">Choose another conversation</button></div>
       <p id="permission-status" class="status" role="status"></p>
-      <p class="hint">Prompt Later requests access only for the selected provider. It never requests access to every supported AI site at once.</p>
+      <p class="gate-footnote">Prompt Later requests access only for the selected provider. It never requests access to every supported AI site at once.</p>
     </section>
+
     <section id="scheduler-view" class="layout" hidden>
-      <div class="panel form-panel">
-        <div class="tabs" role="tablist" aria-label="Prompt Later sections">
-          <button role="tab" aria-selected="true" data-tab="send">Send later</button>
-          <button role="tab" aria-selected="false" data-tab="recurring">Recurring</button>
-          <button role="tab" aria-selected="false" data-tab="activity">Activity</button>
-        </div>
-        <div id="form-view">
+      <section class="panel form-panel" aria-labelledby="view-title">
+        <nav class="tabs" role="tablist" aria-label="Prompt Later sections">
+          <button id="tab-send" role="tab" aria-controls="form-view" aria-selected="true" data-tab="send">Send later</button>
+          <button id="tab-recurring" role="tab" aria-controls="form-view" aria-selected="false" data-tab="recurring">Recurring</button>
+          <button id="tab-activity" role="tab" aria-controls="activity-view" aria-selected="false" data-tab="activity">Activity</button>
+        </nav>
+
+        <div id="form-view" role="tabpanel" aria-labelledby="tab-send">
+          <div class="view-heading"><div><p class="eyebrow" id="view-eyebrow">New schedule</p><h1 id="view-title">Send a message later</h1><p id="view-description">Choose the conversation, write your prompt, and decide when it should go.</p></div></div>
           <form id="job-form">
             <input type="hidden" id="job-id">
-            <div class="field"><label for="url">Conversation URL</label><div class="inline"><input id="url" name="url" type="url" required placeholder="https://chatgpt.com/c/..." autocomplete="off"><button class="secondary" type="button" id="current-tab">Use current tab</button></div><div id="target-help" class="hint">Use a link to an existing conversation.</div><div id="provider-chip" class="chip" hidden></div></div>
-            <div id="once-fields">
-              <div class="field"><label for="when">When</label><select id="when"><option value="5h">In 5 hours</option><option value="1m">In 1 minute</option><option value="custom">Choose date &amp; time</option></select></div>
-              <div class="field" id="custom-time-field" hidden><label for="custom-time">Date and time</label><input id="custom-time" type="datetime-local"><div id="once-zone" class="hint"></div></div>
-              <p class="hint">The default is a five-hour delay, not quota-reset detection.</p>
+            <div class="field">
+              <div class="label-row"><label for="url">Conversation</label><span id="provider-chip" class="chip provider-chip" hidden></span></div>
+              <div class="inline url-control"><input id="url" name="url" type="url" required placeholder="Paste a conversation URL" autocomplete="off" aria-describedby="target-help"><button class="secondary current-tab" type="button" id="current-tab"><span class="target-icon" aria-hidden="true"></span>Use current tab</button></div>
+              <div id="target-help" class="hint">Works with an existing conversation on a supported AI provider.</div>
             </div>
-            <div id="recurring-fields" hidden>
+
+            <div id="once-fields" class="schedule-fields">
+              <div class="field"><label for="when">Send time</label><select id="when"><option value="5h">In 5 hours</option><option value="1m">In 1 minute</option><option value="custom">Choose date &amp; time</option></select></div>
+              <div class="field" id="custom-time-field" hidden><label for="custom-time">Date and time</label><input id="custom-time" type="datetime-local" aria-describedby="once-zone"><div id="once-zone" class="hint"></div></div>
+              <p class="hint schedule-hint"><span aria-hidden="true">◷</span> The default is a five-hour delay, not quota-reset detection.</p>
+            </div>
+
+            <div id="recurring-fields" class="schedule-fields recurring-grid" hidden>
               <div class="field"><label for="recurrence">Repeat</label><select id="recurrence"><option value="interval">Every N hours</option><option value="daily">Daily</option><option value="weekdays">Weekdays</option><option value="cron">Advanced cron</option></select></div>
               <div class="field" id="interval-field"><label for="interval-hours">Every N hours</label><input id="interval-hours" type="number" min="1" step="1" value="5"></div>
               <div class="field" id="recurring-time-field" hidden><label for="recurring-time">Time</label><input id="recurring-time" type="time" value="07:00"></div>
-              <div class="field" id="cron-field" hidden><label for="cron">Five-field cron</label><input id="cron" type="text" value="0 7 * * 1-5" placeholder="0 7 * * 1-5"><div class="hint">Use exactly five fields.</div></div>
-              <div class="field"><label for="timezone">Time zone</label><input id="timezone" list="zones" value="" placeholder="Europe/London"><datalist id="zones"></datalist></div>
-              <div id="next-preview" class="preview"></div>
+              <div class="field" id="cron-field" hidden><label for="cron">Five-field cron</label><input id="cron" type="text" value="0 7 * * 1-5" placeholder="0 7 * * 1-5" aria-describedby="cron-help"><div id="cron-help" class="hint">Use exactly five fields.</div></div>
+              <div class="field timezone-field"><label for="timezone">Time zone</label><input id="timezone" list="zones" value="" placeholder="Europe/London"><datalist id="zones"></datalist></div>
+              <div id="next-preview" class="preview" aria-live="polite"></div>
             </div>
-            <div class="field"><label for="message">Message</label><textarea id="message" name="message" rows="7" maxlength="20000" required placeholder="What should be sent in this conversation?"></textarea><div class="hint">Up to 20,000 characters. Prompt Later never stores transcripts or model responses.</div></div>
-            <details class="options"><summary>Options</summary><div class="field"><label for="missed-policy">If late</label><select id="missed-policy"><option value="skip">Skip if more than 5 minutes late</option><option value="run-once">Send once when available</option></select></div></details><div class="actions"><button class="primary" type="submit" id="save">Save scheduled message</button><button class="secondary" type="button" id="check">Check page</button><button class="secondary" type="button" id="cancel-edit" hidden>Cancel editing</button></div><p class="hint permission-note">Access is requested only for the chosen provider site.</p>
+
+            <div class="field message-field">
+              <div class="label-row"><label for="message">Message</label><output id="message-count" class="character-count" for="message">0 / 20,000</output></div>
+              <textarea id="message" name="message" rows="4" maxlength="20000" required placeholder="Write the message you want to send…" aria-describedby="message-help message-count"></textarea>
+              <div id="message-help" class="hint">Stored locally. Transcripts and model responses are never collected.</div>
+            </div>
+
+            <details class="options"><summary>Delivery options <span aria-hidden="true"></span></summary><div class="options-content"><div class="field"><label for="missed-policy">If the scheduled time is missed</label><select id="missed-policy"><option value="skip">Skip if more than 5 minutes late</option><option value="run-once">Send once when available</option></select></div></div></details>
+            <div class="actions form-actions"><button class="primary" type="submit" id="save"><span class="button-clock" aria-hidden="true"></span><span id="save-label">Save scheduled message</span></button><button class="secondary" type="button" id="check">Check page</button><button class="secondary" type="button" id="cancel-edit" hidden>Cancel editing</button></div>
+            <p class="hint permission-note"><span class="shield-icon" aria-hidden="true">✓</span> Access is requested only for the chosen provider site.</p>
             <p id="form-status" class="status" role="status"></p>
           </form>
         </div>
-        <div id="activity-view" hidden><h2>Activity</h2><p class="hint">Sent means the site acknowledged submission; it does not mean the AI has finished.</p><div id="activity-list" class="stack"></div></div>
-      </div>
-      <aside class="panel list-panel"><div class="list-heading"><div><h2 id="list-title">Saved messages</h2><p class="hint">Keep your browser open and computer awake. Turning off the monitor is fine. Scheduled times can be delayed; your account limits still apply.</p></div><span id="job-count" class="count"></span></div><div id="job-list" class="stack"></div><div class="privacy"><strong>Privacy</strong><p>Saved messages, conversation URLs, schedules, and activity are encrypted locally using a browser-held device key by default. Optional passphrase protection is available under Advanced privacy in the full dashboard. Messages are sent to the selected provider using your signed-in account. No extension backend, telemetry, or AI API key is used. Completed jobs remain until deleted; activity is retained separately.</p></div></aside>
+
+        <div id="activity-view" role="tabpanel" aria-labelledby="tab-activity" hidden>
+          <div class="view-heading activity-heading"><div><p class="eyebrow">Delivery log</p><h1 id="activity-title">Activity</h1><p>Sent means the site acknowledged submission; it does not mean the AI has finished.</p></div></div>
+          <div id="activity-list" class="stack activity-list"></div>
+        </div>
+      </section>
+
+      <aside class="panel list-panel" aria-labelledby="list-title">
+        <div class="list-heading"><div><p class="eyebrow">Your queue</p><h2 id="list-title">Saved messages</h2></div><div class="list-heading-actions"><span id="job-count" class="count" aria-label="Saved message count"></span><button id="popup-queue-toggle" class="queue-toggle" type="button" aria-controls="job-list" aria-expanded="false" hidden>Show</button></div></div>
+        <p class="queue-note"><span class="awake-dot" aria-hidden="true"></span><span>Keep the browser open and computer awake. Delivery can be delayed and account limits still apply.</span></p>
+        <div id="job-list" class="stack"></div>
+        <button id="job-list-toggle" class="list-toggle" type="button" hidden></button>
+        <details class="privacy"><summary><span class="privacy-icon" aria-hidden="true">✓</span><span><strong>Private by default</strong><small>Encrypted and stored on this device</small></span><span class="summary-chevron" aria-hidden="true"></span></summary><p>Saved messages, conversation URLs, schedules, and activity are encrypted locally using a browser-held device key by default. Optional passphrase protection is available under Advanced privacy in the full dashboard.</p><p>Messages are sent to the selected provider using your signed-in account. No extension backend, telemetry, or AI API key is used. Completed jobs remain until deleted; activity is retained separately.</p></details>
+        <details id="privacy-settings" class="privacy-settings" hidden>
+          <summary><span class="settings-icon" aria-hidden="true"></span><span><strong>Advanced privacy</strong><small>Manage saved-data protection</small></span><span class="summary-chevron" aria-hidden="true"></span></summary>
+          <div id="privacy-content">
+            <h3 id="privacy-title"></h3><p id="privacy-description"></p>
+            <button id="privacy-enable" class="secondary" type="button">Require a passphrase</button><button id="privacy-disable" class="secondary" type="button" hidden>Use automatic device protection</button>
+            <form id="privacy-form" hidden><p class="warning">A forgotten passphrase cannot be recovered. Browser restarts and extension updates pause schedules until you unlock in the dashboard.</p><div class="field"><label for="privacy-passphrase">Passphrase</label><input id="privacy-passphrase" type="password" minlength="12" maxlength="1024" required autocomplete="new-password"></div><div class="field"><label for="privacy-confirm">Confirm passphrase</label><input id="privacy-confirm" type="password" minlength="12" maxlength="1024" required autocomplete="new-password"></div><div class="actions"><button id="privacy-submit" class="primary" type="submit">Enable passphrase protection</button><button id="privacy-cancel" class="secondary" type="button">Cancel</button></div></form>
+            <p id="privacy-status" class="status" role="status"></p>
+          </div>
+        </details>
+      </aside>
     </section>
-    <details id="privacy-settings" class="panel" hidden>
-      <summary>Advanced privacy</summary>
-      <div id="privacy-content">
-        <h3 id="privacy-title"></h3><p id="privacy-description"></p>
-        <button id="privacy-enable" class="secondary" type="button">Require a passphrase</button>
-        <button id="privacy-disable" class="secondary" type="button" hidden>Use automatic device protection</button>
-        <form id="privacy-form" hidden>
-          <p class="warning">A forgotten passphrase cannot be recovered. Browser restarts and extension updates pause schedules until you unlock in the dashboard.</p>
-          <div class="field"><label for="privacy-passphrase">Passphrase</label><input id="privacy-passphrase" type="password" minlength="12" maxlength="1024" required autocomplete="new-password"></div>
-          <div class="field"><label for="privacy-confirm">Confirm passphrase</label><input id="privacy-confirm" type="password" minlength="12" maxlength="1024" required autocomplete="new-password"></div>
-          <div class="actions"><button id="privacy-submit" class="primary" type="submit">Enable passphrase protection</button><button id="privacy-cancel" class="secondary" type="button">Cancel</button></div>
-        </form>
-        <p id="privacy-status" class="status" role="status"></p>
-      </div>
-    </details>
+
+    <dialog id="current-tab-dialog" class="app-dialog" aria-labelledby="current-tab-dialog-title" aria-describedby="current-tab-dialog-description">
+      <form method="dialog">
+        <button class="dialog-close" type="submit" aria-label="Close">×</button>
+        <span class="dialog-icon" aria-hidden="true">!</span>
+        <h2 id="current-tab-dialog-title">Open a conversation first</h2>
+        <p id="current-tab-dialog-description">This tab isn’t an existing conversation on a supported AI provider.</p>
+        <p class="dialog-note">A fresh provider homepage or new-chat screen won’t work yet. Start or open a conversation so it has its own conversation URL, then try again.</p>
+        <button class="primary dialog-action" type="submit">Got it</button>
+      </form>
+    </dialog>
   </main>
   <script type="module" src="app.js"></script>
 </body>

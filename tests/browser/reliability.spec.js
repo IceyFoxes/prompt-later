@@ -309,10 +309,11 @@ test('R10 text, activity, Devin badge, source-tab dashboard, timezone, and popup
     const capturedZone = await popup.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
     await popup.clock.install();
     await popup.clock.fastForward(31000);
+    await popup.locator('#popup-queue-toggle').click();
     await expect(popup.locator('#job-list .meta')).toContainText(capturedZone);
     const popupBox = await popup.locator('body').boundingBox();
     const saveBottom = await popup.locator('#save').evaluate(element => element.getBoundingClientRect().bottom);
-    expect(popupBox.width).toBe(420);
+    expect(popupBox.width).toBe(320);
     expect(saveBottom).toBeLessThanOrEqual(600);
     const dashboardPromise = context.waitForEvent('page');
     await popup.locator('#dashboard-link').click();

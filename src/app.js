@@ -6,9 +6,11 @@ const extension = typeof chrome !== 'undefined' && Boolean(chrome.runtime?.sendM
 const $ = id => document.getElementById(id);
 const form = $('job-form');
 const params = new URLSearchParams(location.search);
+const requestedTab = params.get('tab');
+const JOB_DISPLAY_LIMIT = 4;
 const state = {
   data: { jobs: [], history: [] },
-  tab: params.get('tab') || 'send',
+  tab: ['send', 'recurring', 'activity'].includes(requestedTab) ? requestedTab : 'send',
   editing: null,
   popup: params.get('popup') === '1',
   sourceTabId: params.has('sourceTabId') && Number.isInteger(Number(params.get('sourceTabId'))) && Number(params.get('sourceTabId')) > 0 ? Number(params.get('sourceTabId')) : null,
@@ -23,6 +25,8 @@ const state = {
   privacyPending: false,
   privacyMode: null,
   loadGeneration: 0,
+  expandedJobs: { send: false, recurring: false },
+  popupQueueExpanded: false,
 };
 
 function send(action, payload = {}) {
@@ -148,6 +152,11 @@ function showTarget(target) {
   }
 }
 
+function updateMessageCount() {
+  const length = $('message').value.length;
+  $('message-count').textContent = `${length.toLocaleString()} / 20,000`;
+}
+
 function updateTargetPreview() {
   try {
     showTarget(parseTarget($('url').value));
@@ -245,8 +254,9 @@ function previewSchedule() {
     const now = Date.now();
     const schedule = readSchedule(now, true);
     const next = nextOccurrence(schedule, now);
+    const formatted = next ? new Date(next).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short', timeZone: schedule.timeZone }) : '';
     text($('next-preview'), next
-      ? `Next occurrence: ${new Date(next).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short', timeZone: schedule.timeZone })} (${schedule.timeZone})`
+      ? state.popup ? `Next: ${formatted} · ${schedule.timeZone}` : `Next occurrence: ${formatted} (${schedule.timeZone})`
       : 'No future occurrence.');
   } catch (error) {
     text($('next-preview'), error.message);
@@ -254,9 +264,19 @@ function previewSchedule() {
 }
 
 function renderTabs() {
+  document.body.dataset.tab = state.tab;
   document.querySelectorAll('[role="tab"]').forEach(tab => {
-    tab.setAttribute('aria-selected', String(tab.dataset.tab === state.tab));
+    const selected = tab.dataset.tab === state.tab;
+    tab.setAttribute('aria-selected', String(selected));
+    tab.tabIndex = selected ? 0 : -1;
   });
+  $('form-view').setAttribute('aria-labelledby', state.tab === 'recurring' ? 'tab-recurring' : 'tab-send');
+  document.querySelector('.form-panel').setAttribute('aria-labelledby', state.tab === 'activity' ? 'activity-title' : 'view-title');
+  $('view-eyebrow').textContent = state.tab === 'recurring' ? 'Automation' : 'New schedule';
+  $('view-title').textContent = state.tab === 'recurring' ? 'Set a recurring message' : 'Send a message later';
+  $('view-description').textContent = state.tab === 'recurring'
+    ? 'Create a reliable rhythm with an interval, daily time, or custom schedule.'
+    : 'Choose the conversation, write your prompt, and decide when it should go.';
   $('list-title').textContent = state.tab === 'recurring' ? 'Recurring messages' : state.tab === 'activity' ? 'Activity' : 'Saved messages';
   syncFormVisibility();
 }
@@ -271,7 +291,8 @@ function clearForm() {
   $('recurring-time').value = '07:00';
   $('cron').value = '0 7 * * 1-5';
   $('cancel-edit').hidden = true;
-  $('save').textContent = 'Save scheduled message';
+  $('save-label').textContent = 'Save scheduled message';
+  updateMessageCount();
   showTarget();
   clearAccessTarget();
   syncFormVisibility();
@@ -282,9 +303,10 @@ function fillJob(job) {
   state.editing = job.id;
   $('url').value = job.url;
   $('message').value = job.message;
+  updateMessageCount();
   $('missed-policy').value = job.missedPolicy;
   $('cancel-edit').hidden = false;
-  $('save').textContent = 'Update scheduled message';
+  $('save-label').textContent = 'Update scheduled message';
   if (job.schedule.type === 'once') {
     state.tab = 'send';
     $('when').value = 'custom';
@@ -335,7 +357,7 @@ function jobCard(job) {
   const provider = document.createElement('strong');
   provider.textContent = providerLabel(job.provider);
   const status = document.createElement('span');
-  status.className = `chip ${job.status === 'needs-attention' ? 'attention' : ''}`;
+  status.className = `chip job-status job-status-${job.status}`;
   status.textContent = statusLabel(job);
   head.append(provider, status);
   const message = document.createElement('div');
@@ -393,6 +415,7 @@ function activityCard(run) {
   const item = document.createElement('article');
   item.className = 'card';
   const heading = document.createElement('strong');
+  heading.className = `activity-status activity-status-${run.status}`;
   heading.textContent = run.status === 'sent' ? 'Sent' : run.status === 'skipped' ? 'Skipped' : run.status === 'uncertain' ? 'Uncertain' : run.status === 'checking' ? 'Preparing' : run.status === 'dispatching' ? 'Sending' : 'Needs attention';
   const provider = document.createElement('div');
   provider.textContent = `${providerLabel(run.provider)} · ${new Date(run.startedAt).toLocaleString()}`;
@@ -413,10 +436,16 @@ function activityCard(run) {
 
 function renderJobs() {
   const list = $('job-list');
+  const listToggle = $('job-list-toggle');
+  const queueToggle = $('popup-queue-toggle');
   list.replaceChildren();
   const isActivity = state.tab === 'activity';
   document.querySelector('.list-panel').hidden = isActivity;
-  list.hidden = isActivity;
+  list.hidden = isActivity || (state.popup && !state.popupQueueExpanded);
+  listToggle.hidden = true;
+  queueToggle.hidden = !state.popup || isActivity;
+  queueToggle.textContent = state.popupQueueExpanded ? 'Hide' : 'Show';
+  queueToggle.setAttribute('aria-expanded', String(state.popupQueueExpanded));
   document.querySelector('.list-heading').hidden = isActivity;
   document.querySelector('.privacy').hidden = isActivity;
   const jobs = state.data.jobs.filter(job => state.tab === 'recurring'
@@ -430,7 +459,15 @@ function renderJobs() {
       empty.textContent = state.tab === 'recurring' ? 'No recurring messages saved.' : 'No one-off messages saved.';
       list.append(empty);
     } else {
-      jobs.forEach(job => list.append(jobCard(job)));
+      const expanded = state.expandedJobs[state.tab];
+      const displayLimit = state.popup ? 2 : JOB_DISPLAY_LIMIT;
+      const visibleJobs = expanded ? jobs : jobs.slice(0, displayLimit);
+      visibleJobs.forEach(job => list.append(jobCard(job)));
+      if (jobs.length > displayLimit && (!state.popup || state.popupQueueExpanded)) {
+        listToggle.hidden = false;
+        listToggle.textContent = expanded ? 'Show fewer' : `Show all ${jobs.length}`;
+        listToggle.setAttribute('aria-expanded', String(expanded));
+      }
     }
   }
   const activity = $('activity-list');
@@ -443,6 +480,19 @@ function renderJobs() {
   } else {
     state.data.history.slice().reverse().forEach(run => activity.append(activityCard(run)));
   }
+}
+
+function toggleJobList() {
+  if (!['send', 'recurring'].includes(state.tab)) return;
+  state.expandedJobs[state.tab] = !state.expandedJobs[state.tab];
+  renderJobs();
+  if (!state.expandedJobs[state.tab]) document.querySelector('.list-heading').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function togglePopupQueue() {
+  if (!state.popup || state.tab === 'activity') return;
+  state.popupQueueExpanded = !state.popupQueueExpanded;
+  renderJobs();
 }
 
 function clearSchedulerView() {
@@ -608,16 +658,30 @@ async function load() {
   }
 }
 
-async function currentTab(blocking = false) {
+function showCurrentTabDialog() {
+  const dialog = $('current-tab-dialog');
+  if (typeof dialog.showModal === 'function') {
+    if (!dialog.open) dialog.showModal();
+  } else {
+    alert('Open an existing conversation on a supported AI provider first. A fresh homepage or new-chat screen does not have a conversation URL yet.');
+  }
+}
+
+async function currentTab(blocking = false, reportInvalid = false) {
   if (!isUnlocked()) return;
   let result;
   try {
     result = await send('CURRENT_TAB', { sourceTabId: state.sourceTabId });
   } catch {
-    await load();
+    if (reportInvalid) showCurrentTabDialog();
+    else await load();
     return;
   }
-  if (!result.ok || !result.data?.url || !isUnlocked()) { clearAccessTarget(); return; }
+  if (!result.ok || !result.data?.url || !isUnlocked()) {
+    clearAccessTarget();
+    if (reportInvalid && isUnlocked()) showCurrentTabDialog();
+    return;
+  }
   state.sourceTabId = result.data.id;
   try {
     const target = parseTarget(result.data.url);
@@ -628,6 +692,7 @@ async function currentTab(blocking = false) {
     $('url').value = '';
     showTarget();
     clearAccessTarget();
+    if (reportInvalid) showCurrentTabDialog();
   }
 }
 
@@ -734,7 +799,22 @@ function switchTab(event) {
   previewSchedule();
 }
 
-document.querySelectorAll('[role="tab"]').forEach(tab => tab.addEventListener('click', switchTab));
+function navigateTabs(event) {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+  const tabs = [...document.querySelectorAll('[role="tab"]')];
+  const current = tabs.indexOf(event.currentTarget);
+  const next = event.key === 'Home' ? 0
+    : event.key === 'End' ? tabs.length - 1
+      : (current + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+  event.preventDefault();
+  tabs[next].focus();
+  tabs[next].click();
+}
+
+document.querySelectorAll('[role="tab"]').forEach(tab => {
+  tab.addEventListener('click', switchTab);
+  tab.addEventListener('keydown', navigateTabs);
+});
 $('vault-form').addEventListener('submit', vaultSubmit);
 $('permission-allow').addEventListener('click', grantAccess);
 $('permission-dismiss').addEventListener('click', dismissAccess);
@@ -748,9 +828,14 @@ $('privacy-cancel').addEventListener('click', () => {
   $('privacy-enable').focus();
 });
 form.addEventListener('submit', save);
-$('current-tab').addEventListener('click', () => currentTab());
+$('current-tab').addEventListener('click', () => currentTab(false, true));
+$('current-tab-dialog').addEventListener('click', event => {
+  if (event.target === $('current-tab-dialog')) $('current-tab-dialog').close();
+});
 $('check').addEventListener('click', checkPage);
 $('cancel-edit').addEventListener('click', clearForm);
+$('job-list-toggle').addEventListener('click', toggleJobList);
+$('popup-queue-toggle').addEventListener('click', togglePopupQueue);
 $('dashboard-link').addEventListener('click', openDashboard);
 $('when').addEventListener('change', syncFormVisibility);
 $('recurrence').addEventListener('change', updateRecurringFields);
@@ -760,6 +845,7 @@ $('cron').addEventListener('input', previewSchedule);
 $('timezone').addEventListener('input', previewSchedule);
 $('url').addEventListener('input', updateTargetPreview);
 $('url').addEventListener('change', syncUrlAccess);
+$('message').addEventListener('input', updateMessageCount);
 if (extension) {
   chrome.storage.onChanged.addListener((changes, area) => {
     if ((area === 'local' || area === 'session') && Object.keys(changes).some(key => ['prompt-later.vault.v1', 'prompt-later.vault-next.v1', 'prompt-later.vault-session.v1', 'prompt-later.v1'].includes(key))) load();
@@ -773,6 +859,7 @@ if (extension) {
   $('check').disabled = true;
 }
 if (state.popup) document.body.classList.add('popup');
+$('dashboard-link').hidden = !state.popup;
 populateTimezones();
 clearForm();
 if (state.popup || state.sourceTabId) {

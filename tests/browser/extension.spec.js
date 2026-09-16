@@ -100,3 +100,48 @@ testWithExtension('does not click when the selected composer already has a draft
   await expect(provider.locator('#prompt-textarea')).toHaveValue('Existing draft');
   await provider.close();
 });
+
+testWithExtension('limits saved messages to four until the queue is expanded', async ({ environment }) => {
+  const { page } = environment;
+  for (let index = 1; index <= 5; index += 1) {
+    await page.locator('#url').fill(`https://chatgpt.com/c/queue-${index}`);
+    await page.locator('#when').selectOption('1m');
+    await page.locator('#message').fill(`Queued message ${index}`);
+    await page.locator('#save').click();
+    await expect(page.locator('#form-status')).toContainText('Message scheduled.');
+  }
+  await expect(page.locator('#job-count')).toHaveText('5');
+  await expect(page.locator('#job-list .card')).toHaveCount(4);
+  await expect(page.locator('#job-list-toggle')).toHaveText('Show all 5');
+  await page.locator('#job-list-toggle').click();
+  await expect(page.locator('#job-list .card')).toHaveCount(5);
+  await expect(page.locator('#job-list-toggle')).toHaveText('Show fewer');
+  await page.locator('#job-list-toggle').click();
+  await expect(page.locator('#job-list .card')).toHaveCount(4);
+});
+
+testWithExtension('compact popup aligns recurring controls and explains invalid current tabs', async ({ environment }) => {
+  const { context, id, page } = environment;
+  const source = await context.newPage();
+  await source.goto('https://chatgpt.com/');
+  const sourceTab = await page.evaluate(async () => (await chrome.tabs.query({ url: 'https://chatgpt.com/' }))[0]);
+  const popup = await context.newPage();
+  await popup.setViewportSize({ width: 320, height: 600 });
+  await popup.goto(`chrome-extension://${id}/app.html?popup=1&sourceTabId=${sourceTab.id}`);
+  const shell = await popup.locator('.shell').boundingBox();
+  expect(shell.height).toBeLessThanOrEqual(405);
+  await popup.locator('[data-tab="recurring"]').click();
+  const repeat = await popup.locator('#recurrence').boundingBox();
+  const interval = await popup.locator('#interval-hours').boundingBox();
+  expect(Math.abs(repeat.y - interval.y)).toBeLessThanOrEqual(1);
+  expect(Math.abs(repeat.width - interval.width)).toBeLessThanOrEqual(2);
+  const recurringShell = await popup.locator('.shell').boundingBox();
+  expect(recurringShell.height).toBeLessThanOrEqual(415);
+  await popup.evaluate(() => window.scrollTo(0, 0));
+  await popup.screenshot({ path: path.join(root, 'artifacts/screenshots/popup-recurring.png') });
+  await popup.locator('#current-tab').click();
+  await expect(popup.locator('#current-tab-dialog')).toBeVisible();
+  await expect(popup.locator('#current-tab-dialog')).toContainText('fresh provider homepage');
+  await popup.close();
+  await source.close();
+});
