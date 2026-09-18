@@ -25,7 +25,6 @@ for (const value of ['http://chatgpt.com/c/id', 'javascript:alert(1)', 'https://
 const newProviders = [
   ['https://gemini.google.com/app/0123456789abcdef', 'gemini'],
   ['https://gemini.google.com/u/1/app/0123456789abcdef?authuser=1&hl=en', 'gemini'],
-  ['https://grok.com/c/12345678-1234-1234-1234-123456789abc', 'grok'],
   ['https://chat.deepseek.com/a/chat/s/12345678-1234-1234-1234-123456789abc', 'deepseek'],
   ['https://www.kimi.com/chat/12345678-1234-1234-1234-123456789abc?chat_enter_method=home', 'kimi'],
   ['https://kimi.com/chat/12345678-1234-1234-1234-123456789abc', 'kimi'],
@@ -46,8 +45,6 @@ for (const [url, provider] of newProviders) {
 for (const value of [
   'https://gemini.google.com/app',
   'https://gemini.google.com/share/id',
-  'https://grok.com/share/id',
-  'https://grok.com/imagine/id',
   'https://chat.deepseek.com/sign_in',
   'https://www.kimi.com/share/id',
   'https://www.kimi.com/chat/history',
@@ -58,7 +55,6 @@ for (const value of [
   'https://chat.mistral.ai/chat',
   'https://chat.mistral.ai/chat/settings',
   'https://gemini.google.com.evil.test/app/0123456789abcdef',
-  'https://grok.com.evil.test/c/12345678-1234-1234-1234-123456789abc',
   'https://chat.deepseek.com.evil.test/a/chat/s/12345678-1234-1234-1234-123456789abc',
   'https://www.kimi.com.evil.test/chat/12345678-1234-1234-1234-123456789abc',
   'https://www.perplexity.ai.evil.test/search/test-question-12345678',
@@ -79,10 +75,9 @@ test('experimental identity queries and navigation are canonicalized precisely',
   assert.equal(sameTarget('https://gemini.google.com/app/0123456789abcdef?authuser=1', 'https://gemini.google.com/app/0123456789abcdef?authuser=2'), false);
   assert.equal(sameTarget('https://gemini.google.com/u/1/app/0123456789abcdef', 'https://gemini.google.com/u/2/app/0123456789abcdef'), false);
   assert.equal(sameTarget('https://gemini.google.com/app/0123456789abcdef', 'https://gemini.google.com/app/22345678abcdef01'), false);
-  assert.equal(sameTarget('https://grok.com/c/12345678-1234-1234-1234-123456789abc', 'https://grok.com/c/22345678-1234-1234-1234-123456789abc'), false);
 });
 
-const providerLabels = { gemini: 'Gemini', grok: 'Grok', deepseek: 'DeepSeek', kimi: 'Kimi', perplexity: 'Perplexity', copilot: 'Microsoft Copilot', qwen: 'Qwen', mistral: 'Mistral Le Chat' };
+const providerLabels = { gemini: 'Gemini', deepseek: 'DeepSeek', kimi: 'Kimi', perplexity: 'Perplexity', copilot: 'Microsoft Copilot', qwen: 'Qwen', mistral: 'Mistral Le Chat' };
 for (const [value, provider] of newProviders) {
   test(`preserves ${provider} origin and rejects unsafe URL variants`, () => {
     const original = new URL(value);

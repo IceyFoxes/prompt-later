@@ -70,21 +70,6 @@ export const PROVIDERS = {
     userTextSelector: '.query-text',
     busySelectors: ['button.send-button.stop', 'button[aria-label="Stop response"]', 'button[aria-label="停止回答"]'],
   },
-  grok: {
-    label: 'Grok',
-    host: 'grok.com',
-    experimental: true,
-    pathPattern: /^\/c\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
-    enhanced: true,
-    insertion: 'tiptap',
-    composerScopes: 'form',
-    selectors: {
-      editors: ['.tiptap.ProseMirror[contenteditable="true"]', '.ProseMirror[contenteditable="true"]', 'textarea[placeholder*="Ask" i]'],
-      sends: ['button[data-testid="chat-submit"]', 'button[aria-label="Submit"]', 'button[aria-label="提交"]', 'button[aria-label="Send message"]'],
-      users: ['[data-testid="user-message"]', '[data-role="user"]'],
-    },
-    busySelectors: ['button[data-testid="chat-stop"]', 'button[aria-label="Stop"]', 'button[aria-label="停止"]'],
-  },
   deepseek: {
     label: 'DeepSeek',
     host: 'chat.deepseek.com',

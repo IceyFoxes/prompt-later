@@ -30,7 +30,7 @@ test('optional permissions have exact registry parity', () => {
   assert.deepEqual(manifest.optional_host_permissions, optionalHostPermissions());
   assert.deepEqual(optionalHostPermissions(), [
     'https://chatgpt.com/*', 'https://claude.ai/*', 'https://app.devin.ai/*',
-    'https://gemini.google.com/*', 'https://grok.com/*', 'https://chat.deepseek.com/*',
+    'https://gemini.google.com/*', 'https://chat.deepseek.com/*',
     'https://www.kimi.com/*', 'https://kimi.com/*', 'https://www.perplexity.ai/*',
     'https://perplexity.ai/*', 'https://copilot.microsoft.com/*', 'https://chat.qwen.ai/*',
     'https://chat.mistral.ai/*',
@@ -38,8 +38,6 @@ test('optional permissions have exact registry parity', () => {
 });
 
 test('host lookup is exact and labels mark only experimental providers', () => {
-  assert.equal(providerForHost('grok.com'), 'grok');
-  assert.equal(providerForHost('sub.grok.com'), null);
   assert.equal(providerForHost('kimi.com'), 'kimi');
   assert.equal(providerForHost('kimi.com.evil.test'), null);
   assert.equal(providerLabel('chatgpt'), 'ChatGPT');
@@ -47,7 +45,7 @@ test('host lookup is exact and labels mark only experimental providers', () => {
   assert.equal(providerLabel('devin'), 'Devin (experimental)');
   assert.equal(providerLabel('unknown'), 'Unknown provider');
   assert.equal(providerLabel('constructor'), 'Unknown provider');
-  for (const id of ['gemini', 'grok', 'deepseek', 'kimi', 'perplexity', 'copilot', 'qwen', 'mistral']) {
+  for (const id of ['gemini', 'deepseek', 'kimi', 'perplexity', 'copilot', 'qwen', 'mistral']) {
     assert.equal(PROVIDERS[id].experimental, true);
     assert.match(providerLabel(id), /experimental/);
   }
