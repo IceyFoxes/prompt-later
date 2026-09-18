@@ -30,7 +30,7 @@ test('generated store pages preserve approved source text without external execu
   }
 });
 
-test('store disclosures describe automatic encryption and optional dashboard-only protection without weakening release gates', () => {
+test('store disclosures describe automatic device encryption without weakening release gates', () => {
   assert(['draft', 'ready'].includes(listing.status));
   assert(['draft', 'ready'].includes(listing.privacyStatus));
   assert.equal(listing.visibility, 'unlisted');
@@ -40,17 +40,17 @@ test('store disclosures describe automatic encryption and optional dashboard-onl
   const policy = listing.privacySections.flatMap(section => section.paragraphs).join('\n');
   assert.match(policy, /not hardware-backed/);
   assert.match(policy, /someone controlling the browser or profile/);
-  assert.match(policy, /600,000 iterations/);
-  assert.match(policy, /existing passphrase-protected vaults remain protected unless you explicitly disable/);
+  assert.match(policy, /cannot be opened by this version/);
+  assert.match(policy, /reading the stored record back/);
   assert.match(policy, /recoverable copies are preserved/);
   assert.doesNotMatch(policy, /paused until you create a passphrase/);
-  assert.match(listing.testInstructions[0], /scheduler opens without a passphrase/);
+  assert.match(listing.testInstructions[0], /opens immediately with no passphrase/);
 });
 
 test('store images have the required PNG dimensions', () => {
   for (const [name, width, height] of [
     ['icon128.png', 128, 128], ['small-promo.png', 440, 280],
-    ['send-later.png', 1280, 800], ['recurring.png', 1280, 800], ['vault-unlock.png', 1280, 800],
+    ['send-later.png', 1280, 800], ['recurring.png', 1280, 800], ['privacy-settings.png', 1280, 800],
   ]) {
     const image = fs.readFileSync(path.join(store, 'images', name));
     assert.equal(image.subarray(0, 8).toString('hex'), '89504e470d0a1a0a', name);

@@ -1,13 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createDecipheriv, pbkdf2Sync, webcrypto } from 'node:crypto';
+import { createDecipheriv, webcrypto } from 'node:crypto';
 import { emptyState } from '../../src/store.js';
 
 globalThis.crypto ??= webcrypto;
-const { decryptDeviceState, decryptState, deriveVaultKey, encryptDeviceState, encryptState, KDF_ITERATIONS, newVaultSalt, validSession, validateDeviceEnvelope, validateEnvelope, vaultMode } = await import('../../src/vault-crypto.js');
+const { decryptDeviceState, encryptDeviceState, isPassphraseEnvelope, validateDeviceEnvelope, vaultMode } = await import('../../src/vault-crypto.js');
 
-const passphrase = 'A unique synthetic vault passphrase';
-const salt = Buffer.alloc(16, 7).toString('base64');
 const rawKey = Buffer.alloc(32, 11).toString('base64');
 const state = {
   version: 1,
@@ -21,63 +19,6 @@ function flip(value) {
   return bytes.toString('base64');
 }
 
-test('vault derivation agrees with independent PBKDF2-HMAC-SHA256', async () => {
-  assert.equal(KDF_ITERATIONS, 600000);
-  const expected = pbkdf2Sync(passphrase, Buffer.from(salt, 'base64'), 600000, 32, 'sha256').toString('base64');
-  assert.equal(await deriveVaultKey(passphrase, salt), expected);
-  assert.notEqual(await deriveVaultKey(`${passphrase} `, salt), expected);
-});
-
-test('vault encryption is independently readable as AES-256-GCM with bound metadata', async () => {
-  const envelope = await encryptState(state, rawKey, salt);
-  assert.deepEqual(Object.keys(envelope).sort(), ['cipher', 'data', 'iterations', 'iv', 'kdf', 'salt', 'version']);
-  const ciphertext = Buffer.from(envelope.data, 'base64');
-  const decipher = createDecipheriv('aes-256-gcm', Buffer.from(rawKey, 'base64'), Buffer.from(envelope.iv, 'base64'));
-  decipher.setAAD(Buffer.from(`prompt-later:vault:1:PBKDF2-SHA256:600000:${salt}`));
-  decipher.setAuthTag(ciphertext.subarray(-16));
-  const plaintext = Buffer.concat([decipher.update(ciphertext.subarray(0, -16)), decipher.final()]);
-  assert.deepEqual(JSON.parse(plaintext.toString('utf8')), state);
-  assert.deepEqual(await decryptState(envelope, rawKey), state);
-  for (const secret of [passphrase, rawKey, state.jobs[0].message, state.jobs[0].url]) {
-    assert.equal(JSON.stringify(envelope).includes(secret), false);
-  }
-});
-
-test('each vault write uses a fresh nonce, and fresh vaults use distinct salts', async () => {
-  const first = await encryptState(emptyState(), rawKey, salt);
-  const second = await encryptState(emptyState(), rawKey, salt);
-  assert.notEqual(first.iv, second.iv);
-  assert.notEqual(first.data, second.data);
-  assert.equal(Buffer.from(first.iv, 'base64').length, 12);
-  const generated = newVaultSalt();
-  assert.equal(Buffer.from(generated, 'base64').length, 16);
-  assert.notEqual(generated, newVaultSalt());
-});
-
-test('wrong keys and changed authenticated ciphertext, nonce, or salt are rejected', async () => {
-  const envelope = await encryptState(state, rawKey, salt);
-  await assert.rejects(() => decryptState(envelope, flip(rawKey)), /incorrect|damaged/);
-  for (const field of ['data', 'iv', 'salt']) {
-    await assert.rejects(() => decryptState({ ...envelope, [field]: flip(envelope[field]) }, rawKey), /incorrect|damaged/);
-  }
-  assert.deepEqual(await decryptState(envelope, rawKey), state);
-});
-
-test('vault headers, encodings, session keys, and passphrase bounds are validated', async () => {
-  const envelope = await encryptState(emptyState(), rawKey, salt);
-  for (const change of [{ version: 2 }, { iterations: 1 }, { iterations: 600001 }, { kdf: 'SHA256' }, { cipher: 'AES-CBC' }, { salt: 'invalid' }, { iv: Buffer.alloc(11).toString('base64') }, { data: '' }, { extra: 'secret' }]) {
-    assert.throws(() => validateEnvelope({ ...envelope, ...change }));
-  }
-  for (const value of ['', 'short', ' '.repeat(12), 'x'.repeat(1025), null]) {
-    await assert.rejects(() => deriveVaultKey(value, salt), /passphrase/);
-  }
-  assert.equal(validSession({ key: rawKey, salt }, salt), true);
-  assert.equal(validSession({ key: rawKey, salt }, flip(salt)), false);
-  assert.equal(validSession({ key: 'bad', salt }, salt), false);
-  assert.equal(validSession(undefined, salt), false);
-  await assert.rejects(() => encryptState({ version: 9 }, rawKey, salt));
-});
-
 const deviceKey = (raw = rawKey, extractable = false, usages = ['encrypt', 'decrypt']) => webcrypto.subtle.importKey('raw', Buffer.from(raw, 'base64'), { name: 'AES-GCM' }, extractable, usages);
 
 test('device ciphertext is independently readable as AES-256-GCM with exact v2 metadata', async () => {
@@ -85,7 +26,6 @@ test('device ciphertext is independently readable as AES-256-GCM with exact v2 m
   const envelope = await encryptDeviceState(state, key);
   assert.deepEqual(Object.keys(envelope).sort(), ['cipher', 'data', 'iv', 'keyId', 'mode', 'version']);
   assert.equal(vaultMode(envelope), 'device');
-  assert.equal(vaultMode(await encryptState(state, rawKey, salt)), 'passphrase');
   const ciphertext = Buffer.from(envelope.data, 'base64');
   const decipher = createDecipheriv('aes-256-gcm', Buffer.from(rawKey, 'base64'), Buffer.from(envelope.iv, 'base64'));
   decipher.setAAD(Buffer.from('prompt-later:vault:2:device:prompt-later.device-key.v1'));
@@ -125,6 +65,25 @@ test('device encryption enforces non-exportability, usages, key ID and the plain
   const oversized = structuredClone(state);
   oversized.jobs[0].lastDetail = 'x'.repeat(7 * 1024 * 1024);
   await assert.rejects(() => encryptDeviceState(oversized, key), /too large/);
-  await assert.rejects(() => encryptState(oversized, rawKey, salt), /too large/);
   assert.deepEqual(await decryptDeviceState(envelope, key), state);
+  assert.deepEqual(await decryptDeviceState(await encryptDeviceState(emptyState(), key), key), emptyState());
+});
+
+test('a passphrase vault is refused with instructions instead of being called damaged', () => {
+  // Written by an older version; unreadable here, but recoverable by the user.
+  const legacy = {
+    version: 1,
+    kdf: 'PBKDF2-SHA256',
+    iterations: 600000,
+    salt: Buffer.alloc(16, 7).toString('base64'),
+    cipher: 'AES-GCM-256',
+    iv: Buffer.alloc(12, 3).toString('base64'),
+    data: Buffer.alloc(32, 5).toString('base64'),
+  };
+  assert.equal(isPassphraseEnvelope(legacy), true);
+  assert.throws(() => vaultMode(legacy), /passphrase.*no longer supported/s);
+  assert.throws(() => vaultMode(legacy), /turn off passphrase protection/);
+  assert.throws(() => vaultMode(legacy), /Nothing was reset/);
+  assert.equal(isPassphraseEnvelope({ version: 2, mode: 'device' }), false);
+  assert.throws(() => vaultMode({ version: 3 }), /unreadable or unsupported/);
 });
