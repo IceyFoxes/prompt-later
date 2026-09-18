@@ -139,7 +139,6 @@ button:focus-visible,a:focus-visible,summary:focus-visible { outline:3px solid r
 .card .job-status-needs-attention { border-color:#ffd8cf; background:var(--danger-soft); color:var(--danger); }
 .card .job-status-paused,.card .job-status-completed { border-color:#e3e2e8; background:#f4f4f7; color:#6b6b78; }
 .card .job-status-running { border-color:#ded8ff; background:var(--accent-soft); color:#5141c8; }
-.card .job-status-waiting { border-color:#ffe6bd; background:#fff7e8; color:#8a5a00; }
 .check-details { list-style:none; margin:8px 0 0; padding:0; display:grid; gap:6px; }
 .check-row { position:relative; padding:6px 10px 6px 26px; border:1px solid var(--border); border-radius:10px; font-size:13px; line-height:1.45; color:var(--muted-strong); background:var(--surface-soft); }
 .check-row::before { position:absolute; left:9px; top:6px; font-weight:700; }

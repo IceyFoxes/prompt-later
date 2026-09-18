@@ -343,12 +343,10 @@ function formatCountdown(timestamp) {
   return minutes < 60 ? `in ${minutes} min` : `in ${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
-const isWaiting = job => job.status === 'scheduled' && job.attempts > 0;
 
 function statusLabel(job) {
   if (job.status === 'needs-attention') return 'Needs attention';
   if (job.status === 'paused') return 'Paused';
-  if (isWaiting(job)) return 'Waiting to retry';
   return job.status;
 }
 
@@ -360,7 +358,7 @@ function jobCard(job) {
   const provider = document.createElement('strong');
   provider.textContent = providerLabel(job.provider);
   const status = document.createElement('span');
-  status.className = `chip job-status job-status-${isWaiting(job) ? 'waiting' : job.status}`;
+  status.className = `chip job-status job-status-${job.status}`;
   status.textContent = statusLabel(job);
   head.append(provider, status);
   const message = document.createElement('div');
@@ -379,7 +377,7 @@ function jobCard(job) {
   const when = job.nextRunAt
     ? `${formatAbsolute(job.nextRunAt, job.schedule.timeZone)} (${job.schedule.timeZone}) · ${formatCountdown(job.nextRunAt)}`
     : `${job.lastDetail || (job.status === 'completed' ? 'Completed' : 'Paused')} (${job.schedule.timeZone})`;
-  meta.textContent = isWaiting(job) ? `${job.lastDetail} Trying again ${formatCountdown(job.nextRunAt)}.` : when;
+  meta.textContent = when;
   const actions = document.createElement('div');
   actions.className = 'card-actions';
   const running = job.status === 'running';
@@ -508,8 +506,8 @@ function clearSchedulerView() {
 }
 
 const DRAFT_POLICY_HINTS = {
-  wait: 'The scheduled message waits and tries again after 5, 15, then 60 minutes, for up to two hours after its due time.',
-  stop: 'The scheduled message is held and the queue shows it as needing attention, so you can send it yourself.',
+  wait: 'For a recurring message, this occurrence is skipped and the next one stays scheduled. A one-off message is held for your attention.',
+  stop: 'The message is held for your attention and any recurring schedule is paused.',
 };
 
 function renderDeliverySettings() {
@@ -766,7 +764,7 @@ async function draftWarning(target) {
     const policy = state.data?.settings?.draftPolicy || 'wait';
     return policy === 'stop'
       ? ` ${providerLabel(target.provider)} has text in its composer right now. If it is still there when this runs, the message will be held for you instead of sent.`
-      : ` ${providerLabel(target.provider)} has text in its composer right now. If it is still there when this runs, the message will wait and try again.`;
+      : ` ${providerLabel(target.provider)} has text in its composer right now. If it is still there when this runs, a one-off message will be held for your attention and a recurring schedule will continue with its next occurrence.`;
   } catch {
     return '';
   }

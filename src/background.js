@@ -5,6 +5,8 @@ import { isUiSender, UI_MESSAGE } from './protocol.js';
 import { parseTarget } from './targets.js';
 
 const api = globalThis.chrome;
+const DUE_ALARM = 'prompt-later:due';
+const RECOVERY_ALARM = 'prompt-later:recovery';
 const store = api ? createVaultStore(api) : null;
 const deliver = api ? createDelivery(api) : null;
 export const scheduler = api
@@ -12,8 +14,8 @@ export const scheduler = api
       store,
       deliver,
       arm: epoch => epoch === null
-        ? api.alarms.clear('prompt-later:due')
-        : api.alarms.create('prompt-later:due', { when: epoch }),
+        ? api.alarms.clear(DUE_ALARM)
+        : api.alarms.create(DUE_ALARM, { when: epoch }),
     })
   : null;
 
@@ -43,21 +45,23 @@ const storageReady = scheduler ? accessLevel() : Promise.resolve();
 export const ready = scheduler ? storageReady.then(() => store.initialize()) : Promise.resolve();
 let initialization;
 
-async function suspendScheduler() {
+const RECOVERY_DELAY = 60 * 1000;
+
+async function suspendScheduler(allowRecovery) {
   scheduler.state = null;
   scheduler.initialized = false;
-  await api.alarms.clear('prompt-later:due');
+  await api.alarms.clear(DUE_ALARM);
+  if (allowRecovery) {
+    // One separate recovery alarm gives a transient failure another chance
+    // without turning a permanently unreadable vault into a minute-by-minute loop.
+    await api.alarms.create(RECOVERY_ALARM, { when: Date.now() + RECOVERY_DELAY });
+  }
   await api.action.setBadgeText({ text: '!' });
 }
 
 async function vaultStatus() {
   await storageReady;
-  try {
-    return await store.status();
-  } catch (error) {
-    await suspendScheduler();
-    throw error;
-  }
+  return store.status();
 }
 
 async function activeScheduler() {
@@ -119,19 +123,21 @@ if (api) {
     return true;
   });
 
-  const tickError = async () => {
-    await suspendScheduler().catch(reportError);
+  const tickError = async allowRecovery => {
+    await suspendScheduler(allowRecovery).catch(reportError);
     reportError();
   };
-  const runTick = () => storageReady.then(async () => {
+  const runTick = (allowRecovery = true) => storageReady.then(async () => {
     await activeScheduler();
     await scheduler.tick();
+    await api.alarms.clear(RECOVERY_ALARM);
     await api.action.setBadgeText({ text: '' });
-  }).catch(tickError);
-  ready.then(runTick).catch(tickError);
+  }).catch(() => tickError(allowRecovery));
+  ready.then(() => runTick(true)).catch(() => tickError(true));
   api.alarms.onAlarm.addListener(alarm => {
-    if (alarm.name === 'prompt-later:due') runTick();
+    if (alarm.name === DUE_ALARM) runTick(true);
+    if (alarm.name === RECOVERY_ALARM) runTick(false);
   });
-  api.runtime.onStartup.addListener(runTick);
-  api.runtime.onInstalled.addListener(runTick);
+  api.runtime.onStartup.addListener(() => runTick(true));
+  api.runtime.onInstalled.addListener(() => runTick(true));
 }

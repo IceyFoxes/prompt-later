@@ -123,3 +123,17 @@ test('completed recurring jobs and self-contained deleted history validate', () 
   assert.doesNotThrow(() => validateState(completedRecurring));
   assert.doesNotThrow(() => validateState({ version: 1, jobs: [], history: [historical()] }));
 });
+
+
+test('legacy retry bookkeeping is accepted once and removed from validated state', () => {
+  const job = {
+    id: 'legacy-retry', url: target, provider: 'chatgpt', message: 'Legacy retry',
+    schedule: { type: 'once', at: 5000, timeZone: 'UTC' }, missedPolicy: 'skip',
+    createdAt: 1, updatedAt: 1, enabled: true, status: 'scheduled', nextRunAt: 5000,
+    runId: null, lastOutcome: null, lastDetail: '', attempts: 2, retryUntil: 60000, failures: 4,
+  };
+  const state = validateState({ version: 1, jobs: [job], history: [] });
+  assert.equal(Object.hasOwn(state.jobs[0], 'attempts'), false);
+  assert.equal(Object.hasOwn(state.jobs[0], 'retryUntil'), false);
+  assert.equal(Object.hasOwn(state.jobs[0], 'failures'), false);
+});

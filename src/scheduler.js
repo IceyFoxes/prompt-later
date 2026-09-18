@@ -1,12 +1,28 @@
 import { nextOccurrence, validateSchedule } from './schedules.js';
 import { draftPolicyOf, pruneHistory, validateDraftPolicy, validateState } from './store.js';
 import { parseTarget } from './targets.js';
-import { isTemporary, REASONS, RETRY_DELAYS, RETRY_WINDOW } from './outcomes.js';
+import { REASONS } from './outcomes.js';
 
 const LATE_LIMIT = 5 * 60 * 1000;
 const ACTIVE_RUNS = new Set(['checking', 'dispatching']);
 const copy = value => structuredClone(value);
 const isRecurring = job => job.schedule.type !== 'once';
+
+function setAttention(job) {
+  job.nextRunAt = null;
+  job.status = 'needs-attention';
+  job.enabled = false;
+}
+
+function advanceRecurring(job, after) {
+  if (!isRecurring(job)) return false;
+  const next = nextOccurrence(job.schedule, after);
+  if (!Number.isFinite(next)) return false;
+  job.nextRunAt = next;
+  job.status = 'scheduled';
+  job.enabled = true;
+  return true;
+}
 
 export class Scheduler {
   constructor({ store, deliver, arm, now = Date.now, newId = () => crypto.randomUUID() }) {
@@ -47,30 +63,45 @@ export class Scheduler {
     if (this.initialized) return;
     await this._mutate(async draft => {
       const now = this.now();
-      const knownRunIds = new Set(draft.history.map(run => run.id));
-      const jobsByRun = new Map(draft.jobs.filter(job => job.runId && knownRunIds.has(job.runId)).map(job => [job.runId, job]));
+      const jobsByRun = new Map(draft.jobs.filter(job => job.runId).map(job => [job.runId, job]));
       for (const job of draft.jobs) {
         if (!['running', 'checking', 'dispatching'].includes(job.status)) continue;
-        job.status = 'needs-attention';
-        job.enabled = false;
-        job.nextRunAt = null;
-        job.lastOutcome = 'uncertain';
-        job.lastDetail = 'A previous run was interrupted before completion.';
-        job.updatedAt = now;
         const run = draft.history.find(item => item.id === job.runId);
-        if (run && ACTIVE_RUNS.has(run.status)) {
-          run.status = 'uncertain';
-          run.finishedAt = now;
-          run.detail = job.lastDetail;
-        }
         job.runId = null;
+        job.updatedAt = now;
+        if (run?.status === 'checking') {
+          // Checking is durably before the commit/click boundary. Requeue the
+          // same occurrence and let its ordinary late policy decide whether it
+          // should still run after the restart.
+          run.status = 'blocked';
+          run.finishedAt = now;
+          run.detail = 'The previous attempt was interrupted before sending.';
+          job.lastOutcome = 'blocked';
+          job.lastDetail = run.detail;
+          job.status = 'scheduled';
+          job.enabled = true;
+          job.nextRunAt = run.dueAt;
+        } else {
+          // Dispatching means a click may have happened. Never repeat that
+          // occurrence; a recurring job may continue with its next occurrence.
+          const detail = 'The previous attempt was interrupted after sending may have started.';
+          if (run && ACTIVE_RUNS.has(run.status)) {
+            run.status = 'uncertain';
+            run.finishedAt = now;
+            run.detail = detail;
+          }
+          job.lastOutcome = 'uncertain';
+          job.lastDetail = detail;
+          if (!advanceRecurring(job, now)) setAttention(job);
+        }
       }
       for (const run of draft.history) {
-        if (ACTIVE_RUNS.has(run.status) && !jobsByRun.has(run.id)) {
-          run.status = 'uncertain';
-          run.finishedAt = now;
-          run.detail = 'An interrupted run had no matching saved job.';
-        }
+        if (!ACTIVE_RUNS.has(run.status) || jobsByRun.has(run.id)) continue;
+        run.status = run.status === 'checking' ? 'blocked' : 'uncertain';
+        run.finishedAt = now;
+        run.detail = run.status === 'blocked'
+          ? 'An interrupted pre-send attempt had no matching saved job.'
+          : 'An interrupted send had no matching saved job.';
       }
     });
     this.initialized = true;
@@ -111,8 +142,6 @@ export class Scheduler {
         runId: null,
         lastOutcome: null,
         lastDetail: '',
-        attempts: 0,
-        retryUntil: null,
       };
       if (existing) draft.jobs[draft.jobs.indexOf(existing)] = job;
       else draft.jobs.push(job);
@@ -126,8 +155,6 @@ export class Scheduler {
       const job = draft.jobs.find(item => item.id === id);
       if (!job) throw new Error('Job not found.');
       if (job.status === 'running') throw new Error('Running jobs cannot be paused.');
-      job.attempts = 0;
-      job.retryUntil = null;
       if (enabled) {
         const next = nextOccurrence(job.schedule, this.now());
         if (!next) throw new Error('Reschedule this one-off job for a future time.');
@@ -216,53 +243,17 @@ export class Scheduler {
       job.runId = null;
       job.updatedAt = finishedAt;
       if (outcome === 'sent') {
-        job.attempts = 0;
-        job.retryUntil = null;
-        if (isRecurring(job)) {
-          const next = nextOccurrence(job.schedule, Math.max(finishedAt, run.dueAt));
-          if (Number.isFinite(next)) {
-            job.nextRunAt = next;
-            job.status = 'scheduled';
-            job.enabled = true;
-          } else {
-            job.nextRunAt = null;
-            job.status = 'completed';
-            job.enabled = false;
-          }
-        } else {
+        if (!advanceRecurring(job, Math.max(finishedAt, run.dueAt))) {
           job.nextRunAt = null;
           job.status = 'completed';
           job.enabled = false;
         }
       } else {
-        const retryAt = this._retryAt(job, run, outcome, result, finishedAt, draft);
-        if (retryAt === null) {
-          job.attempts = 0;
-          job.retryUntil = null;
-          job.nextRunAt = null;
-          job.status = 'needs-attention';
-          job.enabled = false;
-        } else {
-          job.retryUntil = job.retryUntil ?? run.dueAt + RETRY_WINDOW;
-          job.attempts = (job.attempts ?? 0) + 1;
-          job.nextRunAt = retryAt;
-          job.status = 'scheduled';
-          job.enabled = true;
-        }
+        const continueRecurring = !(result?.reason === REASONS.DRAFT && draftPolicyOf(draft) === 'stop')
+          && advanceRecurring(job, Math.max(finishedAt, run.dueAt));
+        if (!continueRecurring) setAttention(job);
       }
     });
-  }
-
-  // When the next attempt should happen, or null to stop and ask for attention.
-  _retryAt(job, run, outcome, result, now, state) {
-    // Waiting out a draft is the default, but the user can ask to be told instead.
-    if (result?.reason === REASONS.DRAFT && draftPolicyOf(state) === 'stop') return null;
-    if (!isTemporary(outcome, result?.reason)) return null;
-    const attempts = job.attempts ?? 0;
-    if (attempts >= RETRY_DELAYS.length) return null;
-    const deadline = job.retryUntil ?? run.dueAt + RETRY_WINDOW;
-    const at = now + RETRY_DELAYS[attempts];
-    return at <= deadline ? at : null;
   }
 
   async _skip(jobSnapshot, runSnapshot) {
@@ -271,8 +262,6 @@ export class Scheduler {
       const run = draft.history.find(item => item.id === runSnapshot.id);
       if (!job || !run || job.runId !== runSnapshot.id) return;
       const now = this.now();
-      job.attempts = 0;
-      job.retryUntil = null;
       run.status = 'skipped';
       run.finishedAt = now;
       run.detail = 'Skipped because it was more than 5 minutes late.';
@@ -280,18 +269,7 @@ export class Scheduler {
       job.lastDetail = run.detail;
       job.runId = null;
       job.updatedAt = now;
-      if (isRecurring(job)) {
-        const next = nextOccurrence(job.schedule, now);
-        if (Number.isFinite(next)) {
-          job.nextRunAt = next;
-          job.status = 'scheduled';
-          job.enabled = true;
-        } else {
-          job.nextRunAt = null;
-          job.status = 'completed';
-          job.enabled = false;
-        }
-      } else {
+      if (!advanceRecurring(job, now)) {
         job.nextRunAt = null;
         job.status = 'completed';
         job.enabled = false;
