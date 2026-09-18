@@ -30,11 +30,13 @@ export function isTemporary(outcome, reason) {
   return !PERMANENT.has(reason);
 }
 
-// A page that was busy, still loading, or holding a draft is very likely fine a
-// few minutes later. The window is measured from the original due time so a
-// message never arrives absurdly late.
-export const RETRY_DELAYS = [5 * 60 * 1000, 15 * 60 * 1000, 60 * 60 * 1000];
-export const RETRY_WINDOW = 2 * 60 * 60 * 1000;
+// A page that is still loading, still replying, or briefly rate limited is
+// usually fine within a minute or two, so attempts are quick and close together.
+// The window is measured from the original due time and matches the five minutes
+// after which a missed run is already considered too late to send, so retrying
+// can never push a message past the point the schedule itself calls stale.
+export const RETRY_DELAYS = [30 * 1000, 60 * 1000, 2 * 60 * 1000];
+export const RETRY_WINDOW = 5 * 60 * 1000;
 export const MAX_ATTEMPTS = RETRY_DELAYS.length;
 
 export function withReason(message, reason, extra = {}) {

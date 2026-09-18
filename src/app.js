@@ -339,6 +339,8 @@ function formatAbsolute(timestamp, zone) {
 function formatCountdown(timestamp) {
   const delta = timestamp - Date.now();
   if (delta <= 0) return 'Due';
+  // Retry attempts are seconds apart, so rounding to minutes would read "in 0 min".
+  if (delta < 60000) return `in ${Math.max(1, Math.round(delta / 1000))} sec`;
   const minutes = Math.round(delta / 60000);
   return minutes < 60 ? `in ${minutes} min` : `in ${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
@@ -508,7 +510,7 @@ function clearSchedulerView() {
 }
 
 const DRAFT_POLICY_HINTS = {
-  wait: 'The scheduled message waits and tries again after 5, 15, then 60 minutes, for up to two hours after its due time.',
+  wait: 'The scheduled message tries again after 30 seconds, then 1 and 2 minutes. If the box is still not clear five minutes after its due time, it stops and asks for attention.',
   stop: 'The scheduled message is held and the queue shows it as needing attention, so you can send it yourself.',
 };
 

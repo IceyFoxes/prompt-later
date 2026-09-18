@@ -90,8 +90,8 @@ test('a temporary failure waits and retries instead of retiring the job', async 
   assert.equal(job.status, 'scheduled');
   assert.equal(job.enabled, true);
   assert.equal(job.attempts, 1);
-  assert.equal(job.nextRunAt, 1000 + 5 * 60 * 1000);
-  assert.equal(job.retryUntil, 900 + 2 * 60 * 60 * 1000);
+  assert.equal(job.nextRunAt, 1000 + 30 * 1000);
+  assert.equal(job.retryUntil, 900 + 5 * 60 * 1000);
   assert.equal(environment.store.data.history[0].status, 'blocked');
   // The waiting attempt must not be picked up again until its time arrives.
   await environment.scheduler.tick();
@@ -145,8 +145,8 @@ test('a waiting job delivers on its next attempt once the page is ready', async 
   }, () => current);
   await environment.scheduler.initialize();
   await environment.scheduler.tick();
-  assert.equal(environment.store.data.jobs[0].nextRunAt, 1000 + 5 * 60 * 1000);
-  current = 1000 + 5 * 60 * 1000;
+  assert.equal(environment.store.data.jobs[0].nextRunAt, 1000 + 30 * 1000);
+  current = 1000 + 30 * 1000;
   await environment.scheduler.tick();
   assert.equal(calls, 2);
   const job = environment.store.data.jobs[0];
@@ -171,7 +171,7 @@ test('a permanent failure asks for attention without retrying', async () => {
 
 test('retries stop after the last delay and ask for attention', async () => {
   const environment = make(
-    { ...emptyState(), jobs: [once(900, { attempts: 3, retryUntil: 900 + 2 * 60 * 60 * 1000 })] },
+    { ...emptyState(), jobs: [once(900, { attempts: 3, retryUntil: 900 + 5 * 60 * 1000 })] },
     async () => ({ outcome: 'blocked', detail: 'draft exists', reason: 'draft' }),
   );
   await environment.scheduler.initialize();
@@ -184,7 +184,7 @@ test('retries stop after the last delay and ask for attention', async () => {
 
 test('a retry is abandoned once it would fall outside the window', async () => {
   const environment = make(
-    { ...emptyState(), jobs: [once(900, { attempts: 2, retryUntil: 1000 + 10 * 60 * 1000 })] },
+    { ...emptyState(), jobs: [once(900, { attempts: 2, retryUntil: 1000 + 60 * 1000 })] },
     async () => ({ outcome: 'blocked', detail: 'still busy', reason: 'busy' }),
   );
   await environment.scheduler.initialize();
@@ -194,7 +194,7 @@ test('a retry is abandoned once it would fall outside the window', async () => {
 
 test('a successful retry clears the retry bookkeeping', async () => {
   const environment = make(
-    { ...emptyState(), jobs: [once(900, { attempts: 2, retryUntil: 900 + 2 * 60 * 60 * 1000 })] },
+    { ...emptyState(), jobs: [once(900, { attempts: 2, retryUntil: 900 + 5 * 60 * 1000 })] },
     async (job, run, mark) => { await mark(); return { outcome: 'sent', detail: 'ack' }; },
   );
   await environment.scheduler.initialize();
