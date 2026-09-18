@@ -3,7 +3,6 @@ import { createVaultStore } from './vault.js';
 import { createDelivery, inspectTarget } from './transport.js';
 import { isUiSender, UI_MESSAGE } from './protocol.js';
 import { parseTarget } from './targets.js';
-import { EDITOR_MESSAGE, editorJobFor, insertTiptapText } from './page-editor.js';
 
 const api = globalThis.chrome;
 const store = api ? createVaultStore(api) : null;
@@ -72,22 +71,6 @@ async function activeScheduler() {
 
 if (api) {
   api.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message?.type === EDITOR_MESSAGE) {
-      (async () => {
-        await activeScheduler();
-        const job = editorJobFor(message, sender, await scheduler.getState(), api.runtime.id);
-        if (!job || !(await permissionGranted(parseTarget(job.url)))) throw new Error('This editor request is not authorized for an active delivery.');
-        const result = await api.scripting.executeScript({
-          target: { tabId: sender.tab.id, frameIds: [0] },
-          world: 'MAIN',
-          func: insertTiptapText,
-          args: [{ url: job.url, message: job.message, marker: message.marker }],
-        });
-        if (result.length !== 1 || result[0].result !== true) throw new Error('The page editor did not acknowledge insertion; nothing was submitted.');
-        reply(sendResponse, true);
-      })().catch(error => fail(sendResponse, error));
-      return true;
-    }
     if (message?.type !== UI_MESSAGE || !isUiSender(sender, api.runtime.id)) return false;
     (async () => {
       await storageReady;

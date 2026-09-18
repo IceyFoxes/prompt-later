@@ -1,5 +1,4 @@
 import { PROVIDERS, providerForHost } from './providers.js';
-import { EDITOR_MESSAGE } from './page-editor.js';
 import { REASONS, withReason } from './outcomes.js';
 import { parseTarget, sameTarget } from './targets.js';
 
@@ -265,18 +264,6 @@ function preflight(provider, message, runId, url) {
   return { ready: true, detail: 'Composer is ready.' };
 }
 
-async function insertPageEditor(composer, message, runId, url) {
-  const marker = crypto.randomUUID();
-  composer.setAttribute('data-prompt-later-editor', marker);
-  try {
-    const result = await chrome.runtime.sendMessage({ type: EDITOR_MESSAGE, runId, url, message, marker });
-    if (!result?.ok) throw withReason(result?.error || 'The page editor did not acknowledge insertion.', REASONS.INSERTION_FAILED);
-    return result.data === true && normalized(textOf(composer)) === normalized(message);
-  } finally {
-    if (composer.getAttribute('data-prompt-later-editor') === marker) composer.removeAttribute('data-prompt-later-editor');
-  }
-}
-
 function insert(composer, message) {
   composer.focus();
   if (composer instanceof HTMLTextAreaElement || composer instanceof HTMLInputElement) {
@@ -375,9 +362,7 @@ async function commit(provider, url, runId, message, record) {
   if (composer !== reservation.composer || !composer.isConnected) throw withReason('The composer changed before sending.', REASONS.PAGE_RACE);
   if (normalized(textOf(composer))) throw withReason('The composer changed before sending; the message remains in the composer.', REASONS.DRAFT);
   if (busy(provider) || attachments(provider, composer) || alertState()) throw withReason('The page is no longer ready to send.', REASONS.BUSY);
-  const inserted = PROVIDERS[provider].insertion === 'tiptap' && !(composer instanceof HTMLTextAreaElement) && !(composer instanceof HTMLInputElement)
-    ? await insertPageEditor(composer, message, runId, url)
-    : insert(composer, message);
+  const inserted = insert(composer, message);
   if (!inserted) throw withReason('Message insertion was not acknowledged; the message remains in the composer.', REASONS.INSERTION_FAILED);
   const { button, disabled } = await waitForButton(provider, composer, message);
   if (!button) {

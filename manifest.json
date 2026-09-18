@@ -5,7 +5,7 @@
   "description": "Schedule messages in your existing AI chats. Local storage, one-off sends, and recurring schedules.",
   "minimum_chrome_version": "120",
   "permissions": ["storage", "alarms", "activeTab", "scripting"],
-  "optional_host_permissions": ["https://chatgpt.com/*", "https://claude.ai/*", "https://app.devin.ai/*", "https://gemini.google.com/*", "https://grok.com/*", "https://chat.deepseek.com/*", "https://www.kimi.com/*", "https://kimi.com/*", "https://www.perplexity.ai/*", "https://perplexity.ai/*", "https://copilot.microsoft.com/*", "https://chat.qwen.ai/*", "https://chat.mistral.ai/*"],
+  "optional_host_permissions": ["https://chatgpt.com/*", "https://claude.ai/*", "https://app.devin.ai/*", "https://gemini.google.com/*", "https://chat.deepseek.com/*", "https://www.kimi.com/*", "https://kimi.com/*", "https://www.perplexity.ai/*", "https://perplexity.ai/*", "https://copilot.microsoft.com/*", "https://chat.qwen.ai/*", "https://chat.mistral.ai/*"],
   "background": {"service_worker": "worker.js", "type": "module"},
   "action": {"default_popup": "app.html?popup=1", "default_title": "Prompt Later"},
   "options_page": "app.html",
