@@ -17,6 +17,15 @@ function extensionFixture() {
 
 const testWithExtension = test.extend({ environment: extensionFixture() });
 
+async function withFixture(fixture, callback) {
+  const environment = await openExtension({ fixture });
+  try {
+    await callback(environment);
+  } finally {
+    await closeExtension(environment);
+  }
+}
+
 test('production manifest keeps declared providers optional', async () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'));
   expect(manifest.optional_host_permissions).toEqual([
@@ -151,6 +160,51 @@ testWithExtension('saving does not warn or open a tab when the conversation is c
   await expect(page.locator('#form-status')).not.toContainText('composer right now');
   // Checking for a draft must never be the reason a conversation opens.
   expect(context.pages().length).toBe(before);
+});
+
+testWithExtension('checking a page reports each finding, not just a sentence', async ({ environment }) => {
+  const { page, context } = environment;
+  const provider = await context.newPage();
+  await provider.goto('https://chatgpt.com/c/checks');
+  await page.locator('#url').fill('https://chatgpt.com/c/checks');
+  await page.locator('#check').click();
+  await expect(page.locator('#form-status')).toContainText('Composer is ready.');
+  await expect(page.locator('#check-details')).toBeVisible();
+  await expect(page.locator('#check-details')).toContainText('Message box found.');
+  // The fixture renders its send button up front, so it is genuinely findable.
+  await expect(page.locator('#check-details')).toContainText('Send button found.');
+  await expect(page.locator('#check-details')).toContainText('No past messages recognised');
+  // Results must not linger once another conversation is chosen.
+  await page.locator('#url').fill('https://chatgpt.com/c/other');
+  await expect(page.locator('#check-details')).toBeHidden();
+  await provider.close();
+});
+
+test('checking a page says when the message box is missing', async () => {
+  await withFixture({ missingEditor: true }, async ({ page, context }) => {
+    const provider = await context.newPage();
+    await provider.goto('https://chatgpt.com/c/no-box');
+    await page.locator('#url').fill('https://chatgpt.com/c/no-box');
+    await page.locator('#check').click();
+    await expect(page.locator('#check-details .check-bad')).toContainText('Message box not found');
+    await provider.close();
+  });
+});
+
+test('a send button that only appears on typing is not reported as broken', async () => {
+  // Real ChatGPT and Claude render no send control beside an empty box, so this
+  // must read as expected rather than as a fault.
+  await withFixture({ hydrateOnDemand: true }, async ({ page, context }) => {
+    const provider = await context.newPage();
+    await provider.goto('https://chatgpt.com/c/late-send');
+    await provider.evaluate(() => window.__hydrate());
+    await page.locator('#url').fill('https://chatgpt.com/c/late-send');
+    await page.locator('#check').click();
+    await expect(page.locator('#form-status')).toContainText('Composer is ready.');
+    await expect(page.locator('#check-details')).toContainText('Send button appears once the box has text');
+    await expect(page.locator('#check-details .check-bad')).toHaveCount(0);
+    await provider.close();
+  });
 });
 
 testWithExtension('the compact popup does not offer delivery settings', async ({ environment }) => {

@@ -1,6 +1,7 @@
 import { parseTarget } from './targets.js';
 import { nextOccurrence, validateSchedule } from './schedules.js';
 import { providerLabel } from './providers.js';
+import { REASONS } from './outcomes.js';
 
 const extension = typeof chrome !== 'undefined' && Boolean(chrome.runtime?.sendMessage);
 const $ = id => document.getElementById(id);
@@ -284,6 +285,7 @@ function renderTabs() {
 
 function clearForm() {
   state.editing = null;
+  clearCheckDetails();
   form.reset();
   $('timezone').value = timezone();
   $('when').value = '5h';
@@ -772,18 +774,79 @@ async function syncUrlAccess() {
   }
 }
 
+function clearCheckDetails() {
+  const list = $('check-details');
+  list.replaceChildren();
+  list.hidden = true;
+}
+
+// The page check already knew all of this and only ever showed one sentence.
+// Reporting each part is what makes a provider whose layout changed diagnosable
+// instead of silently failing at delivery time.
+function checkRows(data) {
+  const rows = [];
+  rows.push(data.composer
+    ? { state: 'ok', text: 'Message box found.' }
+    : { state: 'bad', text: 'Message box not found. This conversation may have changed, or it is not fully loaded.' });
+  // Most providers only render a send button once the box has text, so its
+  // absence beside an empty box is expected rather than a fault.
+  if (data.send) rows.push({ state: 'ok', text: 'Send button found.' });
+  else if (data.draft) rows.push({ state: 'bad', text: 'Send button not found even though the box has text. This conversation may have changed.' });
+  else rows.push({ state: 'info', text: 'Send button appears once the box has text, so it cannot be checked yet.' });
+  rows.push(data.users > 0
+    ? { state: 'ok', text: `Past messages recognised (${data.users}).` }
+    : { state: 'info', text: 'No past messages recognised. Normal in an empty conversation; otherwise Prompt Later may not detect when a message arrives.' });
+  if (data.draft) rows.push({ state: 'warn', text: 'The box already has text, which is left untouched.' });
+  if (data.busy) rows.push({ state: 'warn', text: 'The provider is still replying.' });
+  if (data.attachments) rows.push({ state: 'warn', text: 'An attachment is still pending.' });
+  if (data.error) rows.push({ state: 'warn', text: data.error });
+  return rows;
+}
+
+const UNREACHABLE = {
+  [REASONS.COMPOSER_MISSING]: 'Message box not found. This conversation may have changed, or it is not fully loaded.',
+  [REASONS.COMPOSER_NOT_READY]: 'The message box did not appear in time. Open the conversation and try again.',
+  [REASONS.AMBIGUOUS_CONTROLS]: 'More than one message box or send button matched, so Prompt Later will not guess.',
+  [REASONS.TARGET_MISMATCH]: 'That tab is showing a different conversation.',
+};
+
+function unreachableRows(data) {
+  const text = UNREACHABLE[data?.reason];
+  return text ? [{ state: 'bad', text }] : [];
+}
+
+function renderCheckDetails(data) {
+  const list = $('check-details');
+  list.replaceChildren();
+  const rows = data?.composer === undefined ? unreachableRows(data) : checkRows(data);
+  if (!rows.length) {
+    list.hidden = true;
+    return;
+  }
+  for (const row of rows) {
+    const item = document.createElement('li');
+    item.className = `check-row check-${row.state}`;
+    item.textContent = row.text;
+    list.append(item);
+  }
+  list.hidden = false;
+}
+
 async function checkPage() {
   if (state.pending || !isUnlocked()) return;
   try {
     const target = parseTarget($('url').value);
     setPending(true);
+    clearCheckDetails();
     if (!(await requireAccess(target))) return;
     const result = await send('CHECK_TARGET', { url: target.url });
     if (!result.ok) throw new Error(result.error);
     const blocked = result.data?.status === 'blocked';
     setStatus(`${result.data?.detail || 'Page checked.'} This action does not send.`, blocked);
+    renderCheckDetails(result.data);
   } catch (error) {
     setStatus(error.message, true);
+    clearCheckDetails();
   } finally {
     setPending(false);
   }
@@ -894,7 +957,7 @@ $('interval-hours').addEventListener('input', previewSchedule);
 $('recurring-time').addEventListener('input', previewSchedule);
 $('cron').addEventListener('input', previewSchedule);
 $('timezone').addEventListener('input', previewSchedule);
-$('url').addEventListener('input', updateTargetPreview);
+$('url').addEventListener('input', () => { clearCheckDetails(); updateTargetPreview(); });
 $('url').addEventListener('change', syncUrlAccess);
 $('message').addEventListener('input', updateMessageCount);
 if (extension) {
