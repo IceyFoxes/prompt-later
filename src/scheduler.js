@@ -1,7 +1,7 @@
 import { nextOccurrence, validateSchedule } from './schedules.js';
-import { pruneHistory, validateState } from './store.js';
+import { draftPolicyOf, pruneHistory, validateDraftPolicy, validateState } from './store.js';
 import { parseTarget } from './targets.js';
-import { isTemporary, RETRY_DELAYS, RETRY_WINDOW } from './outcomes.js';
+import { isTemporary, REASONS, RETRY_DELAYS, RETRY_WINDOW } from './outcomes.js';
 
 const LATE_LIMIT = 5 * 60 * 1000;
 const ACTIVE_RUNS = new Set(['checking', 'dispatching']);
@@ -144,6 +144,13 @@ export class Scheduler {
     });
   }
 
+  async updateSettings(input) {
+    return this._mutate(async draft => {
+      draft.settings = { draftPolicy: validateDraftPolicy(input?.draftPolicy) };
+      return draft.settings;
+    });
+  }
+
   async deleteJob(id) {
     return this._mutate(async draft => {
       const index = draft.jobs.findIndex(item => item.id === id);
@@ -228,7 +235,7 @@ export class Scheduler {
           job.enabled = false;
         }
       } else {
-        const retryAt = this._retryAt(job, run, outcome, result, finishedAt);
+        const retryAt = this._retryAt(job, run, outcome, result, finishedAt, draft);
         if (retryAt === null) {
           job.attempts = 0;
           job.retryUntil = null;
@@ -247,7 +254,9 @@ export class Scheduler {
   }
 
   // When the next attempt should happen, or null to stop and ask for attention.
-  _retryAt(job, run, outcome, result, now) {
+  _retryAt(job, run, outcome, result, now, state) {
+    // Waiting out a draft is the default, but the user can ask to be told instead.
+    if (result?.reason === REASONS.DRAFT && draftPolicyOf(state) === 'stop') return null;
     if (!isTemporary(outcome, result?.reason)) return null;
     const attempts = job.attempts ?? 0;
     if (attempts >= RETRY_DELAYS.length) return null;

@@ -27,6 +27,7 @@ const state = {
   loadGeneration: 0,
   expandedJobs: { send: false, recurring: false },
   popupQueueExpanded: false,
+  deliveryPending: false,
 };
 
 function send(action, payload = {}) {
@@ -519,6 +520,34 @@ function resetPrivacyForm() {
   privacyStatus('');
 }
 
+const DRAFT_POLICY_HINTS = {
+  wait: 'The scheduled message waits and tries again after 5, 15, then 60 minutes, for up to two hours after its due time.',
+  stop: 'The scheduled message is held and the queue shows it as needing attention, so you can send it yourself.',
+};
+
+function renderDeliverySettings() {
+  const visible = !state.popup && isUnlocked();
+  $('delivery-settings').hidden = !visible;
+  const policy = state.data?.settings?.draftPolicy || 'wait';
+  const select = $('draft-policy');
+  if (!state.deliveryPending && document.activeElement !== select) select.value = policy;
+  select.disabled = !visible || state.deliveryPending;
+  text($('draft-policy-hint'), DRAFT_POLICY_HINTS[select.value] || DRAFT_POLICY_HINTS.wait);
+}
+
+async function changeDraftPolicy() {
+  if (state.popup || state.deliveryPending || !isUnlocked()) return;
+  const chosen = $('draft-policy').value;
+  state.deliveryPending = true;
+  renderDeliverySettings();
+  const result = await send('UPDATE_SETTINGS', { draftPolicy: chosen });
+  state.deliveryPending = false;
+  text($('delivery-status'), result.ok ? 'Saved.' : result.error);
+  $('delivery-status').className = `status ${result.ok ? 'success' : 'error'}`;
+  if (result.ok) await load();
+  else renderDeliverySettings();
+}
+
 function renderPrivacySettings() {
   const visible = !state.popup && isUnlocked();
   const mode = visible ? state.vault.mode : null;
@@ -607,6 +636,7 @@ function renderVault(status, error = '') {
   $('vault-retry').hidden = !error;
   text($('vault-status'), error);
   renderPrivacySettings();
+  renderDeliverySettings();
   if (locked) clearSchedulerView();
   renderAccessGate();
   setPending(state.pending);
@@ -770,13 +800,29 @@ async function save(event) {
     setStatus('Saving message…');
     const result = await send('UPSERT_JOB', payload);
     if (!result.ok) throw new Error(result.error);
-    setStatus(state.editing ? 'Message updated.' : 'Message scheduled.');
+    const saved = state.editing ? 'Message updated.' : 'Message scheduled.';
     clearForm();
     await load();
+    setStatus(`${saved}${await draftWarning(target)}`);
   } catch (error) {
     setStatus(error.message, true);
   } finally {
     setPending(false);
+  }
+}
+
+// Text sitting in the composer now is the most common reason a scheduled
+// message does not go out, so say so while the user is still looking.
+async function draftWarning(target) {
+  try {
+    const result = await send('CHECK_TARGET', { url: target.url, openIfMissing: false });
+    if (!result.ok || result.data?.draft !== true) return '';
+    const policy = state.data?.settings?.draftPolicy || 'wait';
+    return policy === 'stop'
+      ? ` ${providerLabel(target.provider)} has text in its composer right now. If it is still there when this runs, the message will be held for you instead of sent.`
+      : ` ${providerLabel(target.provider)} has text in its composer right now. If it is still there when this runs, the message will wait and try again.`;
+  } catch {
+    return '';
   }
 }
 
@@ -824,6 +870,7 @@ $('permission-allow').addEventListener('click', grantAccess);
 $('permission-dismiss').addEventListener('click', dismissAccess);
 $('vault-retry').addEventListener('click', load);
 $('privacy-form').addEventListener('submit', privacySubmit);
+$('draft-policy').addEventListener('change', changeDraftPolicy);
 $('privacy-enable').addEventListener('click', showPassphraseForm);
 $('privacy-disable').addEventListener('click', disablePassphrase);
 $('privacy-cancel').addEventListener('click', () => {

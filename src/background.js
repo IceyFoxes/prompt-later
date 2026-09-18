@@ -128,7 +128,7 @@ if (api) {
       if (message.action === 'CHECK_TARGET') {
         const target = parseTarget(payload.url);
         if (!(await permissionGranted(target))) throw new Error('Allow access to this provider before checking the page.');
-        return reply(sendResponse, await inspectTarget(api, target.url));
+        return reply(sendResponse, await inspectTarget(api, target.url, { openIfMissing: payload.openIfMissing !== false }));
       }
       if (message.action === 'UPSERT_JOB') {
         const target = parseTarget(payload.url);
@@ -140,6 +140,9 @@ if (api) {
       }
       if (message.action === 'DELETE_JOB') {
         return reply(sendResponse, await scheduler.deleteJob(payload.id));
+      }
+      if (message.action === 'UPDATE_SETTINGS') {
+        return reply(sendResponse, await scheduler.updateSettings(payload));
       }
       throw new Error('Unknown request.');
     })().catch(error => fail(sendResponse, error));
