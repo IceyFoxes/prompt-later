@@ -163,8 +163,8 @@ test('cold Check page waits for the composer but never types or sends', async ()
     const { navigation } = await beginReload(page, target);
     await page.locator('#check').click();
     await navigation;
-    await expect(page.locator('#form-status')).toContainText('Composer is ready.');
-    await expect(page.locator('#form-status')).toContainText('does not send');
+    await expect(page.locator('#check')).toHaveText('✓ Page ready');
+    await expect(page.locator('#check')).toHaveClass(/check-success/);
     await expect(target.locator('#prompt-textarea')).toHaveValue('');
     await expect(target.locator('[data-message-author-role="user"]')).toHaveCount(0);
     expect((await readState(page)).jobs).toHaveLength(0);

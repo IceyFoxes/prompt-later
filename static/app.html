@@ -33,7 +33,7 @@
       <div class="gate-copy"><p class="eyebrow">Provider access</p><h1 id="permission-title">Checking site access…</h1><p id="permission-description">Checking whether Prompt Later can use the selected conversation.</p></div>
       <div id="permission-actions" class="actions" hidden><button id="permission-allow" class="primary" type="button">Allow site access</button><button id="permission-dismiss" class="secondary" type="button">Choose another conversation</button></div>
       <p id="permission-status" class="status" role="status"></p>
-      <p class="gate-footnote">Prompt Later requests access only for the selected provider. It never requests access to every supported AI site at once.</p>
+      <p class="gate-footnote">Access is limited to the selected provider.</p>
     </section>
 
     <section id="scheduler-view" class="layout" hidden>
@@ -77,29 +77,29 @@
 
             <details class="options"><summary>Delivery options <span aria-hidden="true"></span></summary><div class="options-content"><div class="field"><label for="missed-policy">If the scheduled time is missed</label><select id="missed-policy"><option value="skip">Skip if more than 5 minutes late</option><option value="run-once">Send once when available</option></select></div></div></details>
             <div class="actions form-actions"><button class="primary" type="submit" id="save"><span class="button-clock" aria-hidden="true"></span><span id="save-label">Save scheduled message</span></button><button class="secondary" type="button" id="check">Check page</button><button class="secondary" type="button" id="cancel-edit" hidden>Cancel editing</button></div>
-            <p class="hint permission-note"><span class="shield-icon" aria-hidden="true">✓</span> Access is requested only for the chosen provider site.</p>
+            <p class="hint permission-note"><span class="shield-icon" aria-hidden="true">✓</span> Access is limited to the chosen provider.</p>
             <p id="form-status" class="status" role="status"></p>
-            <ul id="check-details" class="check-details" hidden></ul>
           </form>
         </div>
 
         <div id="activity-view" role="tabpanel" aria-labelledby="tab-activity" hidden>
-          <div class="view-heading activity-heading"><div><p class="eyebrow">Delivery log</p><h1 id="activity-title">Activity</h1><p>Sent means the site acknowledged submission; it does not mean the AI has finished.</p></div></div>
+          <div class="view-heading activity-heading"><div><p class="eyebrow">Delivery log</p><h1 id="activity-title">Activity</h1><p>Sent means submitted, not completed.</p></div><button id="clear-activity" class="icon-button danger" type="button" aria-label="Clear activity" title="Clear activity"><span class="trash-icon" aria-hidden="true"></span></button></div>
+          <p id="activity-status" class="status" role="status"></p>
           <div id="activity-list" class="stack activity-list"></div>
         </div>
       </section>
 
       <aside class="panel list-panel" aria-labelledby="list-title">
         <div class="list-heading"><div><p class="eyebrow">Your queue</p><h2 id="list-title">Saved messages</h2></div><div class="list-heading-actions"><span id="job-count" class="count" aria-label="Saved message count"></span><button id="popup-queue-toggle" class="queue-toggle" type="button" aria-controls="job-list" aria-expanded="false" hidden>Show</button></div></div>
-        <p class="queue-note"><span class="awake-dot" aria-hidden="true"></span><span>Keep the browser open and computer awake. Delivery can be delayed and account limits still apply.</span></p>
+        <p class="queue-note"><span class="awake-dot" aria-hidden="true"></span><span>Keep the browser and computer awake.</span></p>
         <div id="job-list" class="stack"></div>
         <button id="job-list-toggle" class="list-toggle" type="button" hidden></button>
-        <details class="privacy"><summary><span class="privacy-icon" aria-hidden="true">✓</span><span><strong>Private by default</strong><small>Encrypted and stored on this device</small></span><span class="summary-chevron" aria-hidden="true"></span></summary><p>Saved messages, conversation URLs, schedules, and activity are encrypted locally using a browser-held device key by default. Details are under Advanced privacy in the full dashboard.</p><p>Messages are sent to the selected provider using your signed-in account. No extension backend, telemetry, or AI API key is used. Completed jobs remain until deleted; activity is retained separately.</p></details>
+        <details class="privacy"><summary><span class="privacy-icon" aria-hidden="true">✓</span><span><strong>Private by default</strong><small>Encrypted on this device</small></span><span class="summary-chevron" aria-hidden="true"></span></summary><p>Schedules and activity are encrypted on this device. Messages use your signed-in provider; Prompt Later has no backend or telemetry.</p></details>
         <details id="delivery-settings" class="privacy-settings" hidden>
           <summary><span class="settings-icon" aria-hidden="true"></span><span><strong>Delivery</strong><small>What to do if you are mid-draft</small></span><span class="summary-chevron" aria-hidden="true"></span></summary>
           <div id="delivery-content">
-            <h3>Text already in the composer</h3>
-            <p>Prompt Later never sends, edits, or deletes something you were typing. Choose what should happen to the scheduled message instead.</p>
+            <h3>Existing composer text</h3>
+            <p>Prompt Later never changes text already in the composer.</p>
             <div class="field">
               <label for="draft-policy">If the composer is not empty</label>
               <select id="draft-policy">
@@ -115,7 +115,7 @@
           <summary><span class="settings-icon" aria-hidden="true"></span><span><strong>Advanced privacy</strong><small>How saved data is protected</small></span><span class="summary-chevron" aria-hidden="true"></span></summary>
           <div id="privacy-content">
             <h3 id="privacy-title">Automatic device protection</h3>
-            <p id="privacy-description">Saved messages, conversation URLs, schedules, and activity are encrypted with AES-256-GCM using a non-exportable key held by this browser profile, and resume automatically after restarts and updates. This is not hardware-backed protection; someone controlling the browser or profile may still reach the data.</p>
+            <p id="privacy-description">Saved data is encrypted with a key held by this browser profile and resumes automatically after restarts. This does not protect against someone who controls the browser profile.</p>
           </div>
         </details>
       </aside>
@@ -126,8 +126,7 @@
         <button class="dialog-close" type="submit" aria-label="Close">×</button>
         <span class="dialog-icon" aria-hidden="true">!</span>
         <h2 id="current-tab-dialog-title">Open a conversation first</h2>
-        <p id="current-tab-dialog-description">This tab isn’t an existing conversation on a supported AI provider.</p>
-        <p class="dialog-note">A fresh provider homepage or new-chat screen won’t work yet. Start or open a conversation so it has its own conversation URL, then try again.</p>
+        <p id="current-tab-dialog-description">Start or open a conversation so it has its own conversation URL, then try again.</p>
         <button class="primary dialog-action" type="submit">Got it</button>
       </form>
     </dialog>

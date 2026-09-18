@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
-import { closeExtension, dueState, openExtension, root, tickFromPage } from './helpers.js';
+import { closeExtension, dueState, openExtension, readState, root, tickFromPage, writeState } from './helpers.js';
 
 
 function extensionFixture() {
@@ -161,47 +161,42 @@ testWithExtension('saving does not warn or open a tab when the conversation is c
   expect(context.pages().length).toBe(before);
 });
 
-testWithExtension('checking a page reports each finding, not just a sentence', async ({ environment }) => {
+testWithExtension('checking a ready page turns the Check page control green', async ({ environment }) => {
   const { page, context } = environment;
   const provider = await context.newPage();
   await provider.goto('https://chatgpt.com/c/checks');
   await page.locator('#url').fill('https://chatgpt.com/c/checks');
   await page.locator('#check').click();
-  await expect(page.locator('#form-status')).toContainText('Composer is ready.');
-  await expect(page.locator('#check-details')).toBeVisible();
-  await expect(page.locator('#check-details')).toContainText('Message box found.');
-  // The fixture renders its send button up front, so it is genuinely findable.
-  await expect(page.locator('#check-details')).toContainText('Send button found.');
-  await expect(page.locator('#check-details')).toContainText('No past messages recognised');
-  // Results must not linger once another conversation is chosen.
+  await expect(page.locator('#check')).toHaveText('✓ Page ready');
+  await expect(page.locator('#check')).toHaveClass(/check-success/);
+  await expect(page.locator('#form-status')).toBeEmpty();
   await page.locator('#url').fill('https://chatgpt.com/c/other');
-  await expect(page.locator('#check-details')).toBeHidden();
+  await expect(page.locator('#check')).toHaveText('Check page');
+  await expect(page.locator('#check')).not.toHaveClass(/check-success/);
   await provider.close();
 });
 
-test('checking a page says when the message box is missing', async () => {
+test('checking a page reports a concise failure', async () => {
   await withFixture({ missingEditor: true }, async ({ page, context }) => {
     const provider = await context.newPage();
     await provider.goto('https://chatgpt.com/c/no-box');
     await page.locator('#url').fill('https://chatgpt.com/c/no-box');
     await page.locator('#check').click();
-    await expect(page.locator('#check-details .check-bad')).toContainText('Message box not found');
+    await expect(page.locator('#check')).toHaveText('Check page');
+    await expect(page.locator('#form-status')).toContainText('Composer was not found');
     await provider.close();
   });
 });
 
-test('a send button that only appears on typing is not reported as broken', async () => {
-  // Real ChatGPT and Claude render no send control beside an empty box, so this
-  // must read as expected rather than as a fault.
+test('a send button that appears only after typing still passes the compact check', async () => {
   await withFixture({ hydrateOnDemand: true }, async ({ page, context }) => {
     const provider = await context.newPage();
     await provider.goto('https://chatgpt.com/c/late-send');
     await provider.evaluate(() => window.__hydrate());
     await page.locator('#url').fill('https://chatgpt.com/c/late-send');
     await page.locator('#check').click();
-    await expect(page.locator('#form-status')).toContainText('Composer is ready.');
-    await expect(page.locator('#check-details')).toContainText('Send button appears once the box has text');
-    await expect(page.locator('#check-details .check-bad')).toHaveCount(0);
+    await expect(page.locator('#check')).toHaveText('✓ Page ready');
+    await expect(page.locator('#form-status')).toBeEmpty();
     await provider.close();
   });
 });
@@ -253,11 +248,67 @@ testWithExtension('compact popup aligns recurring controls and explains invalid 
   await popup.screenshot({ path: path.join(root, 'artifacts/screenshots/popup-recurring.png') });
   await popup.locator('#current-tab').click();
   await expect(popup.locator('#current-tab-dialog')).toBeVisible();
-  await expect(popup.locator('#current-tab-dialog')).toContainText('fresh provider homepage');
+  await expect(popup.locator('#current-tab-dialog')).toContainText('Start or open a conversation so it has its own conversation URL');
   await popup.close();
   await source.close();
 });
 
+
+testWithExtension('popup returns to its compact height after hiding saved messages and leaving Activity', async ({ environment }) => {
+  const { page, context, id } = environment;
+  for (let index = 1; index <= 5; index += 1) {
+    await page.locator('#url').fill(`https://chatgpt.com/c/popup-size-${index}`);
+    await page.locator('#when').selectOption('1m');
+    await page.locator('#message').fill(`Popup size ${index}`);
+    await page.locator('#save').click();
+  }
+  const stored = await readState(page);
+  stored.history = Array.from({ length: 8 }, (_, index) => ({
+    id: `popup-run-${index}`, jobId: stored.jobs[0].id, url: stored.jobs[0].url,
+    provider: 'chatgpt', preview: `Activity ${index}`, dueAt: index + 1,
+    startedAt: index + 1, finishedAt: index + 2, status: 'sent', detail: 'Done',
+  }));
+  await writeState(page, stored);
+  const popup = await context.newPage();
+  await popup.setViewportSize({ width: 320, height: 600 });
+  await popup.goto(`chrome-extension://${id}/app.html?popup=1`);
+  const shellHeight = () => popup.locator('.shell').evaluate(node => Math.ceil(node.getBoundingClientRect().height));
+  const compact = await shellHeight();
+  await popup.locator('#popup-queue-toggle').click();
+  await expect.poll(shellHeight).toBeGreaterThan(compact);
+  await popup.locator('#popup-queue-toggle').click();
+  await expect.poll(shellHeight).toBeLessThanOrEqual(compact + 2);
+  await popup.locator('[data-tab="activity"]').click();
+  await expect.poll(shellHeight).toBeGreaterThan(compact);
+  await popup.locator('[data-tab="recurring"]').click();
+  await expect(popup.locator('#job-list')).toBeHidden();
+  await expect.poll(shellHeight).toBeLessThanOrEqual(compact + 2);
+  await popup.locator('[data-tab="activity"]').click();
+  await expect.poll(shellHeight).toBeGreaterThan(compact);
+  await popup.locator('[data-tab="send"]').click();
+  await expect(popup.locator('#job-list')).toBeHidden();
+  await expect.poll(shellHeight).toBeLessThanOrEqual(compact + 2);
+  expect(await popup.evaluate(() => document.documentElement.classList.contains('popup-root') && getComputedStyle(document.documentElement).minHeight === '0px')).toBe(true);
+  await popup.close();
+});
+
+testWithExtension('Delivery and Advanced privacy use matching body typography', async ({ environment }) => {
+  const { page } = environment;
+  await page.locator('#delivery-settings').evaluate(node => { node.open = true; });
+  await page.locator('#privacy-settings').evaluate(node => { node.open = true; });
+  const styles = await page.evaluate(() => {
+    const read = selector => {
+      const style = getComputedStyle(document.querySelector(selector));
+      return { fontSize: style.fontSize, color: style.color, marginBottom: style.marginBottom };
+    };
+    return {
+      deliveryHeading: read('#delivery-content h3'), privacyHeading: read('#privacy-content h3'),
+      deliveryCopy: read('#delivery-content > p'), privacyCopy: read('#privacy-content > p'),
+    };
+  });
+  expect(styles.deliveryHeading).toEqual(styles.privacyHeading);
+  expect(styles.deliveryCopy).toEqual(styles.privacyCopy);
+});
 
 testWithExtension('preserves meaningful spaces and indentation in a scheduled prompt', async ({ environment }) => {
   const { page, context } = environment;
@@ -273,4 +324,60 @@ testWithExtension('preserves meaningful spaces and indentation in a scheduled pr
   const delivered = await provider.locator('[data-message-author-role="user"]').evaluate(node => node.textContent);
   expect(delivered).toBe(message);
   await provider.close();
+});
+
+
+testWithExtension('programmatic conversation changes reset the compact page check', async ({ environment }) => {
+  const { page, context } = environment;
+  await page.locator('#url').fill('https://chatgpt.com/c/edit-target');
+  await page.locator('#when').selectOption('1m');
+  await page.locator('#message').fill('Editable job');
+  await page.locator('#save').click();
+  const checked = await context.newPage();
+  await checked.goto('https://chatgpt.com/c/checked-target');
+  await page.locator('#url').fill('https://chatgpt.com/c/checked-target');
+  await page.locator('#check').click();
+  await expect(page.locator('#check')).toHaveText('✓ Page ready');
+  await page.getByRole('button', { name: 'Edit' }).click();
+  await expect(page.locator('#url')).toHaveValue('https://chatgpt.com/c/edit-target');
+  await expect(page.locator('#check')).toHaveText('Check page');
+  await page.locator('#cancel-edit').click();
+  await page.locator('#url').fill('https://chatgpt.com/c/checked-target');
+  await page.locator('#check').click();
+  await expect(page.locator('#check')).toHaveText('✓ Page ready');
+  const current = await context.newPage();
+  await current.goto('https://chatgpt.com/c/current-target');
+  await current.bringToFront();
+  await page.locator('#current-tab').click();
+  await expect(page.locator('#url')).toHaveValue('https://chatgpt.com/c/current-target');
+  await expect(page.locator('#check')).toHaveText('Check page');
+  await current.close();
+  await checked.close();
+});
+
+testWithExtension('a failed activity clear reports the error and restores the bin', async ({ environment }) => {
+  const { page } = environment;
+  const stored = await readState(page);
+  stored.history = [{
+    id: 'clear-failure-run', jobId: 'deleted', url: 'https://chatgpt.com/c/clear-failure',
+    provider: 'chatgpt', preview: 'Clear failure', dueAt: 1, startedAt: 1,
+    finishedAt: 2, status: 'sent', detail: 'Sent',
+  }];
+  await writeState(page, stored);
+  await page.locator('[data-tab="activity"]').click();
+  await expect(page.locator('#clear-activity')).toBeVisible();
+  await page.evaluate(() => {
+    const original = chrome.runtime.sendMessage;
+    window.__restoreClearRpc = () => { chrome.runtime.sendMessage = original; };
+    chrome.runtime.sendMessage = async message => {
+      if (message.action === 'CLEAR_ACTIVITY') throw new Error('Synthetic clear failure');
+      return original.call(chrome.runtime, message);
+    };
+  });
+  page.once('dialog', dialog => dialog.accept());
+  await page.locator('#clear-activity').click();
+  await expect(page.locator('#activity-status')).toContainText('Synthetic clear failure');
+  await expect(page.locator('#clear-activity')).toBeEnabled();
+  expect((await readState(page)).history).toHaveLength(1);
+  await page.evaluate(() => window.__restoreClearRpc());
 });
