@@ -103,6 +103,22 @@
         <div id="job-list" class="stack"></div>
         <button id="job-list-toggle" class="list-toggle" type="button" hidden></button>
         <details class="privacy"><summary><span class="privacy-icon" aria-hidden="true">✓</span><span><strong>Private by default</strong><small>Encrypted and stored on this device</small></span><span class="summary-chevron" aria-hidden="true"></span></summary><p>Saved messages, conversation URLs, schedules, and activity are encrypted locally using a browser-held device key by default. Optional passphrase protection is available under Advanced privacy in the full dashboard.</p><p>Messages are sent to the selected provider using your signed-in account. No extension backend, telemetry, or AI API key is used. Completed jobs remain until deleted; activity is retained separately.</p></details>
+        <details id="delivery-settings" class="privacy-settings" hidden>
+          <summary><span class="settings-icon" aria-hidden="true"></span><span><strong>Delivery</strong><small>What to do if you are mid-draft</small></span><span class="summary-chevron" aria-hidden="true"></span></summary>
+          <div id="delivery-content">
+            <h3>Text already in the composer</h3>
+            <p>Prompt Later never sends, edits, or deletes something you were typing. Choose what should happen to the scheduled message instead.</p>
+            <div class="field">
+              <label for="draft-policy">If the composer is not empty</label>
+              <select id="draft-policy">
+                <option value="wait">Wait and try again later</option>
+                <option value="stop">Stop and tell me</option>
+              </select>
+              <div id="draft-policy-hint" class="hint"></div>
+            </div>
+            <p id="delivery-status" class="status" role="status"></p>
+          </div>
+        </details>
         <details id="privacy-settings" class="privacy-settings" hidden>
           <summary><span class="settings-icon" aria-hidden="true"></span><span><strong>Advanced privacy</strong><small>Manage saved-data protection</small></span><span class="summary-chevron" aria-hidden="true"></span></summary>
           <div id="privacy-content">

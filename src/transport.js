@@ -44,9 +44,11 @@ async function callPage(chromeApi, tabId, message, timeout = 20000) {
   }
 }
 
-async function pageForTarget(chromeApi, target) {
+async function pageForTarget(chromeApi, target, { openIfMissing = true } = {}) {
   let tab = await findTab(chromeApi, target);
   const waitForComposer = !tab || tab.status !== 'complete';
+  // Checking a page must never be the reason a tab appears.
+  if (!tab && !openIfMissing) return null;
   if (!tab) tab = await chromeApi.tabs.create({ url: target.url, active: false });
   await waitForTab(chromeApi, tab.id, target.url);
   await chromeApi.scripting.executeScript({
@@ -99,11 +101,12 @@ export function createDelivery(chromeApi) {
   };
 }
 
-export async function inspectTarget(chromeApi, url) {
+export async function inspectTarget(chromeApi, url, options = {}) {
   const target = parseTarget(url);
   if (!(await hasPermission(chromeApi, target.origin))) {
     return { status: 'blocked', detail: 'Allow access to this provider to check the page.' };
   }
-  const { tab, waitForComposer } = await pageForTarget(chromeApi, target);
-  return callPage(chromeApi, tab.id, { type: 'PL_INSPECT', url: target.url, waitForComposer });
+  const page = await pageForTarget(chromeApi, target, options);
+  if (!page) return { status: 'unopened', detail: 'The conversation is not open in a tab.' };
+  return callPage(chromeApi, page.tab.id, { type: 'PL_INSPECT', url: target.url, waitForComposer: page.waitForComposer });
 }

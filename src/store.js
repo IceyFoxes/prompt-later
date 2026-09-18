@@ -8,6 +8,27 @@ const JOB_STATUSES = new Set(['scheduled', 'paused', 'running', 'checking', 'dis
 const RUN_STATUSES = new Set(['checking', 'dispatching', 'sent', 'skipped', 'blocked', 'uncertain']);
 const FINAL_RUNS = new Set(['sent', 'skipped', 'blocked', 'uncertain']);
 
+// 'wait' postpones a run while the composer holds text; 'stop' asks for
+// attention immediately instead. Absent settings mean the default, so data saved
+// before this existed stays byte-identical on read.
+export const DRAFT_POLICIES = new Set(['wait', 'stop']);
+export const DEFAULT_DRAFT_POLICY = 'wait';
+
+export const draftPolicyOf = state => state?.settings?.draftPolicy || DEFAULT_DRAFT_POLICY;
+
+export function validateDraftPolicy(value) {
+  if (!DRAFT_POLICIES.has(value)) throw new Error('Choose how a draft in the composer should be handled.');
+  return value;
+}
+
+function validateSettings(settings) {
+  if (settings === undefined) return undefined;
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) throw new Error('Prompt Later data has invalid settings.');
+  if (Object.keys(settings).some(key => key !== 'draftPolicy')) throw new Error('Prompt Later data has unknown settings.');
+  if (!DRAFT_POLICIES.has(settings.draftPolicy)) throw new Error('Prompt Later data has an invalid draft policy.');
+  return { draftPolicy: settings.draftPolicy };
+}
+
 export function emptyState() {
   return { version: VERSION, jobs: [], history: [] };
 }
@@ -79,7 +100,8 @@ export function validateState(value) {
   const runIds = new Set();
   const jobs = value.jobs.map(job => validateJob(job, jobIds));
   const history = value.history.map(run => validateRun(run, runIds));
-  return { version: VERSION, jobs, history };
+  const settings = validateSettings(value.settings);
+  return settings === undefined ? { version: VERSION, jobs, history } : { version: VERSION, jobs, history, settings };
 }
 
 export function pruneHistory(state) {

@@ -106,6 +106,34 @@ test('an unclassified failure before dispatch is treated as temporary', async ()
   assert.equal(environment.store.data.jobs[0].attempts, 1);
 });
 
+test('the stop draft policy asks for attention instead of waiting', async () => {
+  const environment = make(undefined, async () => ({ outcome: 'blocked', detail: 'draft exists', reason: 'draft' }));
+  await environment.scheduler.initialize();
+  await environment.scheduler.updateSettings({ draftPolicy: 'stop' });
+  await environment.scheduler.tick();
+  const job = environment.store.data.jobs[0];
+  assert.equal(job.status, 'needs-attention');
+  assert.equal(job.attempts, 0);
+  // Other temporary reasons keep waiting; only drafts follow the setting.
+  assert.equal(environment.store.data.settings.draftPolicy, 'stop');
+});
+
+test('the stop draft policy does not change other temporary failures', async () => {
+  const environment = make(undefined, async () => ({ outcome: 'blocked', detail: 'still generating', reason: 'busy' }));
+  await environment.scheduler.initialize();
+  await environment.scheduler.updateSettings({ draftPolicy: 'stop' });
+  await environment.scheduler.tick();
+  assert.equal(environment.store.data.jobs[0].status, 'scheduled');
+  assert.equal(environment.store.data.jobs[0].attempts, 1);
+});
+
+test('an unknown draft policy is rejected and leaves the setting alone', async () => {
+  const environment = make();
+  await environment.scheduler.initialize();
+  await assert.rejects(() => environment.scheduler.updateSettings({ draftPolicy: 'send-anyway' }));
+  assert.equal(environment.store.data.settings, undefined);
+});
+
 test('a waiting job delivers on its next attempt once the page is ready', async () => {
   let current = 1000;
   let calls = 0;

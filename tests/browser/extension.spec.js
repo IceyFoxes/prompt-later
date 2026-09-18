@@ -101,6 +101,65 @@ testWithExtension('does not click when the selected composer already has a draft
   await provider.close();
 });
 
+testWithExtension('the stop draft setting holds the message for attention instead of waiting', async ({ environment }) => {
+  const { page, context } = environment;
+  await page.locator('#delivery-settings').evaluate(node => { node.open = true; });
+  await page.locator('#draft-policy').selectOption('stop');
+  await expect(page.locator('#delivery-status')).toContainText('Saved.');
+  await page.locator('#url').fill('https://chatgpt.com/c/draft-stop');
+  await page.locator('#when').selectOption('1m');
+  await page.locator('#message').fill('Held for attention');
+  await page.locator('#save').click();
+  const provider = await context.newPage();
+  await provider.goto('https://chatgpt.com/c/draft-stop');
+  await provider.locator('#prompt-textarea').fill('Existing draft');
+  await dueState(page);
+  await tickFromPage(page);
+  await expect(page.locator('#job-list')).toContainText('Needs attention');
+  await expect(page.locator('#job-list')).not.toContainText('Waiting to retry');
+  await expect(provider.locator('#prompt-textarea')).toHaveValue('Existing draft');
+  await expect(provider.locator('[data-message-author-role="user"]')).toHaveCount(0);
+  // The choice survives a reload of the dashboard.
+  await page.reload();
+  await expect(page.locator('#draft-policy')).toHaveValue('stop');
+  await provider.close();
+});
+
+testWithExtension('saving warns when the composer already holds text', async ({ environment }) => {
+  const { page, context } = environment;
+  const provider = await context.newPage();
+  await provider.goto('https://chatgpt.com/c/warn');
+  await provider.locator('#prompt-textarea').fill('Half-written thought');
+  await page.locator('#url').fill('https://chatgpt.com/c/warn');
+  await page.locator('#when').selectOption('1m');
+  await page.locator('#message').fill('Scheduled while mid-draft');
+  await page.locator('#save').click();
+  await expect(page.locator('#form-status')).toContainText('Message scheduled.');
+  await expect(page.locator('#form-status')).toContainText('has text in its composer right now');
+  await expect(page.locator('#form-status')).toContainText('wait and try again');
+  await provider.close();
+});
+
+testWithExtension('saving does not warn or open a tab when the conversation is closed', async ({ environment }) => {
+  const { page, context } = environment;
+  const before = context.pages().length;
+  await page.locator('#url').fill('https://chatgpt.com/c/not-open');
+  await page.locator('#when').selectOption('1m');
+  await page.locator('#message').fill('Nothing open yet');
+  await page.locator('#save').click();
+  await expect(page.locator('#form-status')).toContainText('Message scheduled.');
+  await expect(page.locator('#form-status')).not.toContainText('composer right now');
+  // Checking for a draft must never be the reason a conversation opens.
+  expect(context.pages().length).toBe(before);
+});
+
+testWithExtension('the compact popup does not offer delivery settings', async ({ environment }) => {
+  const { page, id } = environment;
+  await page.goto(`chrome-extension://${id}/app.html?popup=1`);
+  await page.locator('#scheduler-view').waitFor({ state: 'visible' });
+  await expect(page.locator('#delivery-settings')).toBeHidden();
+});
+
 testWithExtension('limits saved messages to four until the queue is expanded', async ({ environment }) => {
   const { page } = environment;
   for (let index = 1; index <= 5; index += 1) {
