@@ -343,9 +343,12 @@ function formatCountdown(timestamp) {
   return minutes < 60 ? `in ${minutes} min` : `in ${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
+const isWaiting = job => job.status === 'scheduled' && job.attempts > 0;
+
 function statusLabel(job) {
   if (job.status === 'needs-attention') return 'Needs attention';
   if (job.status === 'paused') return 'Paused';
+  if (isWaiting(job)) return 'Waiting to retry';
   return job.status;
 }
 
@@ -357,7 +360,7 @@ function jobCard(job) {
   const provider = document.createElement('strong');
   provider.textContent = providerLabel(job.provider);
   const status = document.createElement('span');
-  status.className = `chip job-status job-status-${job.status}`;
+  status.className = `chip job-status job-status-${isWaiting(job) ? 'waiting' : job.status}`;
   status.textContent = statusLabel(job);
   head.append(provider, status);
   const message = document.createElement('div');
@@ -373,9 +376,10 @@ function jobCard(job) {
   meta.className = 'meta';
   meta.dataset.next = job.nextRunAt || '';
   meta.dataset.zone = job.schedule.timeZone;
-  meta.textContent = job.nextRunAt
+  const when = job.nextRunAt
     ? `${formatAbsolute(job.nextRunAt, job.schedule.timeZone)} (${job.schedule.timeZone}) · ${formatCountdown(job.nextRunAt)}`
     : `${job.lastDetail || (job.status === 'completed' ? 'Completed' : 'Paused')} (${job.schedule.timeZone})`;
+  meta.textContent = isWaiting(job) ? `${job.lastDetail} Trying again ${formatCountdown(job.nextRunAt)}.` : when;
   const actions = document.createElement('div');
   actions.className = 'card-actions';
   const running = job.status === 'running';

@@ -96,7 +96,7 @@ testWithExtension('does not click when the selected composer already has a draft
   await provider.locator('#prompt-textarea').fill('Existing draft');
   await dueState(page);
   await tickFromPage(page);
-  await expect(page.locator('#job-list')).toContainText('Needs attention');
+  await expect(page.locator('#job-list')).toContainText('Waiting to retry');
   await expect(provider.locator('#prompt-textarea')).toHaveValue('Existing draft');
   await provider.close();
 });

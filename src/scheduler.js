@@ -1,6 +1,7 @@
 import { nextOccurrence, validateSchedule } from './schedules.js';
 import { pruneHistory, validateState } from './store.js';
 import { parseTarget } from './targets.js';
+import { isTemporary, RETRY_DELAYS, RETRY_WINDOW } from './outcomes.js';
 
 const LATE_LIMIT = 5 * 60 * 1000;
 const ACTIVE_RUNS = new Set(['checking', 'dispatching']);
@@ -110,6 +111,8 @@ export class Scheduler {
         runId: null,
         lastOutcome: null,
         lastDetail: '',
+        attempts: 0,
+        retryUntil: null,
       };
       if (existing) draft.jobs[draft.jobs.indexOf(existing)] = job;
       else draft.jobs.push(job);
@@ -123,6 +126,8 @@ export class Scheduler {
       const job = draft.jobs.find(item => item.id === id);
       if (!job) throw new Error('Job not found.');
       if (job.status === 'running') throw new Error('Running jobs cannot be paused.');
+      job.attempts = 0;
+      job.retryUntil = null;
       if (enabled) {
         const next = nextOccurrence(job.schedule, this.now());
         if (!next) throw new Error('Reschedule this one-off job for a future time.');
@@ -204,6 +209,8 @@ export class Scheduler {
       job.runId = null;
       job.updatedAt = finishedAt;
       if (outcome === 'sent') {
+        job.attempts = 0;
+        job.retryUntil = null;
         if (isRecurring(job)) {
           const next = nextOccurrence(job.schedule, Math.max(finishedAt, run.dueAt));
           if (Number.isFinite(next)) {
@@ -221,11 +228,32 @@ export class Scheduler {
           job.enabled = false;
         }
       } else {
-        job.nextRunAt = null;
-        job.status = 'needs-attention';
-        job.enabled = false;
+        const retryAt = this._retryAt(job, run, outcome, result, finishedAt);
+        if (retryAt === null) {
+          job.attempts = 0;
+          job.retryUntil = null;
+          job.nextRunAt = null;
+          job.status = 'needs-attention';
+          job.enabled = false;
+        } else {
+          job.retryUntil = job.retryUntil ?? run.dueAt + RETRY_WINDOW;
+          job.attempts = (job.attempts ?? 0) + 1;
+          job.nextRunAt = retryAt;
+          job.status = 'scheduled';
+          job.enabled = true;
+        }
       }
     });
+  }
+
+  // When the next attempt should happen, or null to stop and ask for attention.
+  _retryAt(job, run, outcome, result, now) {
+    if (!isTemporary(outcome, result?.reason)) return null;
+    const attempts = job.attempts ?? 0;
+    if (attempts >= RETRY_DELAYS.length) return null;
+    const deadline = job.retryUntil ?? run.dueAt + RETRY_WINDOW;
+    const at = now + RETRY_DELAYS[attempts];
+    return at <= deadline ? at : null;
   }
 
   async _skip(jobSnapshot, runSnapshot) {
@@ -234,6 +262,8 @@ export class Scheduler {
       const run = draft.history.find(item => item.id === runSnapshot.id);
       if (!job || !run || job.runId !== runSnapshot.id) return;
       const now = this.now();
+      job.attempts = 0;
+      job.retryUntil = null;
       run.status = 'skipped';
       run.finishedAt = now;
       run.detail = 'Skipped because it was more than 5 minutes late.';

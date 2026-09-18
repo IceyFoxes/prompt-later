@@ -1,5 +1,6 @@
 import { PROVIDERS, providerForHost } from './providers.js';
 import { EDITOR_MESSAGE } from './page-editor.js';
+import { REASONS, withReason } from './outcomes.js';
 import { parseTarget, sameTarget } from './targets.js';
 
 const SELECTORS = Object.fromEntries(Object.entries(PROVIDERS).map(([id, config]) => [id, config.selectors]));
@@ -47,10 +48,10 @@ function editor(provider) {
   for (const selector of SELECTORS[provider].editors) {
     const nodes = [...document.querySelectorAll(selector)].filter(isEligibleEditor)
       .filter(node => !PROVIDERS[provider].enhanced || node.getAttribute('aria-readonly') !== 'true');
-    if (nodes.length > 1) throw new Error('Composer controls are ambiguous.');
+    if (nodes.length > 1) throw withReason('Composer controls are ambiguous.', REASONS.AMBIGUOUS_CONTROLS);
     if (nodes.length === 1) return nodes[0];
   }
-  throw Object.assign(new Error('Composer was not found.'), { code: 'COMPOSER_NOT_FOUND' });
+  throw withReason('Composer was not found.', REASONS.COMPOSER_MISSING, { code: 'COMPOSER_NOT_FOUND' });
 }
 
 async function waitForComposer(provider, url) {
@@ -58,21 +59,21 @@ async function waitForComposer(provider, url) {
   let candidate = null;
   let stableSince = 0;
   while (Date.now() < deadline) {
-    if (!targetMatches(url)) throw new Error('The page is not the selected conversation.');
+    if (!targetMatches(url)) throw withReason('The page is not the selected conversation.', REASONS.TARGET_MISMATCH);
     let composer = null;
     try { composer = editor(provider); } catch (error) {
       if (error.code !== 'COMPOSER_NOT_FOUND') throw error;
     }
-    if (composer && normalized(textOf(composer))) throw new Error('The composer already contains a draft; it was left untouched.');
-    if (composer && attachments(provider, composer)) throw new Error('Pending attachments must be removed before sending.');
-    if (busy(provider)) throw new Error('The provider is still generating a response.');
+    if (composer && normalized(textOf(composer))) throw withReason('The composer already contains a draft; it was left untouched.', REASONS.DRAFT);
+    if (composer && attachments(provider, composer)) throw withReason('Pending attachments must be removed before sending.', REASONS.ATTACHMENTS);
+    if (busy(provider)) throw withReason('The provider is still generating a response.', REASONS.BUSY);
     const error = alertState();
-    if (error) throw new Error(error);
+    if (error) throw withReason(error, REASONS.PAGE_ALERT);
     if (composer !== candidate) { candidate = composer; stableSince = Date.now(); }
     if (candidate && Date.now() - stableSince >= 500) return;
     await new Promise(resolve => setTimeout(resolve, Math.min(100, Math.max(1, deadline - Date.now()))));
   }
-  throw new Error('The composer did not become ready within 15 seconds. Open the saved conversation and reschedule.');
+  throw withReason('The composer did not become ready within 15 seconds. Open the saved conversation and reschedule.', REASONS.COMPOSER_NOT_READY);
 }
 
 function scopeFor(composer, provider) {
@@ -127,7 +128,7 @@ function sendButton(provider, composer, info) {
   for (const [index, scope] of scopes.entries()) {
     for (const selector of SELECTORS[provider].sends) {
       const candidates = [...scope.querySelectorAll(selector)].filter(isVisible);
-      if (candidates.length > 1) throw new Error('Send controls are ambiguous.');
+      if (candidates.length > 1) throw withReason('Send controls are ambiguous.', REASONS.AMBIGUOUS_CONTROLS);
       // A single disabled match must not end the search: later selectors or a
       // wider scope may hold the control the page actually wired up.
       if (candidates.length === 1) {
@@ -139,7 +140,7 @@ function sendButton(provider, composer, info) {
     const fallback = [...scope.querySelectorAll('button')]
       .filter(isVisible)
       .filter(button => /^(send|send message|send prompt|submit message)$/i.test(accessibleLabel(button)));
-    if (fallback.length > 1) throw new Error('Send controls are ambiguous.');
+    if (fallback.length > 1) throw withReason('Send controls are ambiguous.', REASONS.AMBIGUOUS_CONTROLS);
     if (fallback.length === 1) {
       if (sendEnabled(provider, fallback[0])) return fallback[0];
       if (info) info.disabled = true;
@@ -230,22 +231,22 @@ function inspection(provider) {
 }
 
 function preflight(provider, message, runId, url) {
-  if (state.commits.has(runId)) return { ready: false, detail: 'This run is already being handled.' };
+  if (state.commits.has(runId)) return { ready: false, detail: 'This run is already being handled.', reason: REASONS.RESERVATION_STALE };
   const previous = state.reservations.get(runId);
   if (previous) {
     if (previous.provider !== provider || previous.message !== message || !sameTarget(previous.url, url)) {
-      throw new Error('This run reservation no longer matches.');
+      throw withReason('This run reservation no longer matches.', REASONS.RESERVATION_STALE);
     }
     return { ready: true, detail: 'Composer is ready.' };
   }
   const composer = editor(provider);
-  if (normalized(textOf(composer))) throw new Error('The composer already contains a draft; it was left untouched.');
-  if (attachments(provider, composer)) throw new Error('Pending attachments must be removed before sending.');
-  if (busy(provider)) throw new Error('The provider is still generating a response.');
+  if (normalized(textOf(composer))) throw withReason('The composer already contains a draft; it was left untouched.', REASONS.DRAFT);
+  if (attachments(provider, composer)) throw withReason('Pending attachments must be removed before sending.', REASONS.ATTACHMENTS);
+  if (busy(provider)) throw withReason('The provider is still generating a response.', REASONS.BUSY);
   const error = alertState();
-  if (error) throw new Error(error);
+  if (error) throw withReason(error, REASONS.PAGE_ALERT);
   const target = parseTarget(url);
-  if (!sameTarget(location.href, target.url)) throw new Error('The page is not the selected conversation.');
+  if (!sameTarget(location.href, target.url)) throw withReason('The page is not the selected conversation.', REASONS.TARGET_MISMATCH);
   state.reservations.set(runId, {
     runId,
     composer,
@@ -263,7 +264,7 @@ async function insertPageEditor(composer, message, runId, url) {
   composer.setAttribute('data-prompt-later-editor', marker);
   try {
     const result = await chrome.runtime.sendMessage({ type: EDITOR_MESSAGE, runId, url, message, marker });
-    if (!result?.ok) throw new Error(result?.error || 'The page editor did not acknowledge insertion.');
+    if (!result?.ok) throw withReason(result?.error || 'The page editor did not acknowledge insertion.', REASONS.INSERTION_FAILED);
     return result.data === true && normalized(textOf(composer)) === normalized(message);
   } finally {
     if (composer.getAttribute('data-prompt-later-editor') === marker) composer.removeAttribute('data-prompt-later-editor');
@@ -361,28 +362,28 @@ async function commit(provider, url, runId, message, record) {
   const reservation = state.reservations.get(runId);
   if (!reservation || reservation.expires < Date.now() || reservation.runId !== runId
       || reservation.provider !== provider || reservation.message !== message || !sameTarget(reservation.url, url)) {
-    throw new Error('The preparation expired or no longer matches this run.');
+    throw withReason('The preparation expired or no longer matches this run.', REASONS.RESERVATION_STALE);
   }
-  if (!targetMatches(url)) throw new Error('The conversation changed before sending.');
+  if (!targetMatches(url)) throw withReason('The conversation changed before sending.', REASONS.TARGET_MISMATCH);
   const composer = editor(provider);
-  if (composer !== reservation.composer || !composer.isConnected) throw new Error('The composer changed before sending.');
-  if (normalized(textOf(composer))) throw new Error('The composer changed before sending; the message remains in the composer.');
-  if (busy(provider) || attachments(provider, composer) || alertState()) throw new Error('The page is no longer ready to send.');
+  if (composer !== reservation.composer || !composer.isConnected) throw withReason('The composer changed before sending.', REASONS.PAGE_RACE);
+  if (normalized(textOf(composer))) throw withReason('The composer changed before sending; the message remains in the composer.', REASONS.DRAFT);
+  if (busy(provider) || attachments(provider, composer) || alertState()) throw withReason('The page is no longer ready to send.', REASONS.BUSY);
   const inserted = PROVIDERS[provider].insertion === 'tiptap' && !(composer instanceof HTMLTextAreaElement) && !(composer instanceof HTMLInputElement)
     ? await insertPageEditor(composer, message, runId, url)
     : insert(composer, message);
-  if (!inserted) throw new Error('Message insertion was not acknowledged; the message remains in the composer.');
+  if (!inserted) throw withReason('Message insertion was not acknowledged; the message remains in the composer.', REASONS.INSERTION_FAILED);
   const { button, disabled } = await waitForButton(provider, composer, message);
   if (!button) {
-    throw new Error(disabled
-      ? 'The send control stayed disabled; the message remains in the composer.'
-      : 'The explicit send control was not found; the message remains in the composer.');
+    throw disabled
+      ? withReason('The send control stayed disabled; the message remains in the composer.', REASONS.SEND_DISABLED)
+      : withReason('The explicit send control was not found; the message remains in the composer.', REASONS.SEND_NOT_FOUND);
   }
   if (!targetMatches(url) || !composer.isConnected || editor(provider) !== composer
       || normalized(textOf(composer)) !== normalized(message) || busy(provider) || attachments(provider, composer) || alertState()
       || !sendEnabled(provider, button)
       || (PROVIDERS[provider].enhanced && sendButton(provider, composer) !== button)) {
-    throw new Error('The page changed before sending; the message remains in the composer.');
+    throw withReason('The page changed before sending; the message remains in the composer.', REASONS.PAGE_RACE);
   }
   record.clicked = true;
   button.click();
@@ -408,7 +409,7 @@ function commitOnce(provider, message) {
     try {
       return await commit(provider, message.url, message.runId, message.message, record);
     } catch (error) {
-      return { outcome: record.clicked ? 'uncertain' : 'blocked', detail: error.message };
+      return { outcome: record.clicked ? 'uncertain' : 'blocked', detail: error.message, reason: error.reason };
     } finally {
       state.reservations.delete(message.runId);
     }
@@ -426,16 +427,16 @@ if (!globalThis.__promptLaterListeners) {
     if (sender?.id !== chrome.runtime.id || !['PL_INSPECT', 'PL_PREPARE', 'PL_COMMIT'].includes(message?.type)) return false;
     const currentProvider = provider();
     const work = (async () => {
-      if (!currentProvider || !targetMatches(message.url)) return { status: 'blocked', detail: 'The page is not the selected conversation.' };
+      if (!currentProvider || !targetMatches(message.url)) return { status: 'blocked', detail: 'The page is not the selected conversation.', reason: REASONS.TARGET_MISMATCH };
       if (message.waitForComposer === true && message.type !== 'PL_COMMIT') {
         await waitForComposer(currentProvider, message.url);
-        if (!targetMatches(message.url)) return { status: 'blocked', detail: 'The page is not the selected conversation.' };
+        if (!targetMatches(message.url)) return { status: 'blocked', detail: 'The page is not the selected conversation.', reason: REASONS.TARGET_MISMATCH };
       }
       if (message.type === 'PL_INSPECT') return inspection(currentProvider);
       if (message.type === 'PL_PREPARE') return preflight(currentProvider, message.message, message.runId, message.url);
       return commitOnce(currentProvider, message);
     })();
-    work.then(respond, error => respond({ outcome: 'blocked', status: 'blocked', detail: error.message }));
+    work.then(respond, error => respond({ outcome: 'blocked', status: 'blocked', detail: error.message, reason: error.reason }));
     return true;
   });
 }

@@ -109,7 +109,7 @@ test('permission revoked during preparation blocks before dispatch', async () =>
   let checks = 0;
   chromeApi.permissions.contains = async () => ++checks === 1;
   const result = await createDelivery(chromeApi)(job, run, async () => assert.fail('Must not mark'));
-  assert.deepEqual(result, { outcome: 'blocked', detail: 'Site access was removed before sending.' });
+  assert.deepEqual(result, { outcome: 'blocked', detail: 'Site access was removed before sending.', reason: 'permission-missing' });
   assert.equal(calls.send, 1);
 });
 

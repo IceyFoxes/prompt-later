@@ -1,6 +1,10 @@
 import { parseTarget, sameTarget } from './targets.js';
+import { REASONS, withReason } from './outcomes.js';
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+// A missing reason means "unclassified", which the scheduler treats as worth
+// retrying. Keep it off the object entirely rather than sending an empty key.
+const result = (outcome, detail, reason) => (reason === undefined ? { outcome, detail } : { outcome, detail, reason });
 
 async function hasPermission(chromeApi, origin) {
   if (!chromeApi.permissions?.contains) return false;
@@ -13,11 +17,11 @@ async function waitForTab(chromeApi, tabId, url, timeout = 15000) {
     const tab = await chromeApi.tabs.get(tabId);
     if (tab?.status === 'complete' && sameTarget(tab.url, url)) return tab;
     if (tab?.url && tab.status === 'complete' && !sameTarget(tab.url, url)) {
-      throw new Error('The target tab opened a different conversation.');
+      throw withReason('The target tab opened a different conversation.', REASONS.TARGET_MISMATCH);
     }
     await delay(250);
   }
-  throw new Error('The target conversation did not finish loading in time.');
+  throw withReason('The target conversation did not finish loading in time.', REASONS.TAB_LOAD_TIMEOUT);
 }
 
 async function findTab(chromeApi, target) {
@@ -32,7 +36,7 @@ async function callPage(chromeApi, tabId, message, timeout = 20000) {
     return await Promise.race([
       chromeApi.tabs.sendMessage(tabId, message),
       new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error('The page did not respond in time.')), timeout);
+        timer = setTimeout(() => reject(withReason('The page did not respond in time.', REASONS.PAGE_UNRESPONSIVE)), timeout);
       }),
     ]);
   } finally {
@@ -57,7 +61,7 @@ export function createDelivery(chromeApi) {
   return async function deliver(job, run, markDispatching) {
     const target = parseTarget(job.url);
     if (!(await hasPermission(chromeApi, target.origin))) {
-      return { outcome: 'blocked', detail: 'Allow access to this provider before sending.' };
+      return { outcome: 'blocked', detail: 'Allow access to this provider before sending.', reason: REASONS.PERMISSION_MISSING };
     }
     const { tab, waitForComposer } = await pageForTarget(chromeApi, target);
     const prepared = await callPage(chromeApi, tab.id, {
@@ -68,10 +72,10 @@ export function createDelivery(chromeApi) {
       message: job.message,
     });
     if (!prepared?.ready) {
-      return { outcome: 'blocked', detail: prepared?.detail || 'The page is not ready to receive this message.' };
+      return result('blocked', prepared?.detail || 'The page is not ready to receive this message.', prepared?.reason);
     }
     if (!(await hasPermission(chromeApi, target.origin))) {
-      return { outcome: 'blocked', detail: 'Site access was removed before sending.' };
+      return { outcome: 'blocked', detail: 'Site access was removed before sending.', reason: REASONS.PERMISSION_MISSING };
     }
     await markDispatching();
     try {
@@ -84,12 +88,13 @@ export function createDelivery(chromeApi) {
       if (committed?.outcome === 'sent') {
         return { outcome: 'sent', detail: committed.detail || 'The site acknowledged submission.' };
       }
-      return {
-        outcome: committed?.outcome === 'blocked' ? 'blocked' : 'uncertain',
-        detail: committed?.detail || 'Submission was not acknowledged.',
-      };
+      return result(
+        committed?.outcome === 'blocked' ? 'blocked' : 'uncertain',
+        committed?.detail || 'Submission was not acknowledged.',
+        committed?.reason,
+      );
     } catch (error) {
-      return { outcome: 'uncertain', detail: error.message || 'The page response was lost after dispatch.' };
+      return result('uncertain', error.message || 'The page response was lost after dispatch.', error.reason);
     }
   };
 }
