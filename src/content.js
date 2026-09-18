@@ -179,13 +179,17 @@ function busy(provider) {
     }) || [...document.querySelectorAll('[data-is-streaming="true"]')].some(isVisible);
 }
 
-function matchingUsers(provider, message) {
+function userNodes(provider) {
   const config = PROVIDERS[provider];
-  const nodes = [...new Set(SELECTORS[provider].users.flatMap(selector => [...document.querySelectorAll(selector)]))]
+  return [...new Set(SELECTORS[provider].users.flatMap(selector => [...document.querySelectorAll(selector)]))]
     .filter(isVisible)
     .filter(node => !config.enhanced || !node.closest('form,[contenteditable],textarea,input,nav,aside,dialog,[role="dialog"]'))
     .filter((node, index, all) => !all.some((other, otherIndex) => otherIndex !== index && other.contains(node)));
-  return nodes.filter(node => {
+}
+
+function matchingUsers(provider, message) {
+  const config = PROVIDERS[provider];
+  return userNodes(provider).filter(node => {
     const textNode = config.userTextSelector ? node.querySelector(config.userTextSelector) || node : node;
     return normalized(textOf(textNode)) === normalized(message);
   });
@@ -215,6 +219,7 @@ function inspection(provider) {
       attachments: attachmentState,
       error,
       send: Boolean(sendButton(provider, composer)),
+      users: userNodes(provider).length,
       detail: draft ? 'Composer already contains a draft.' : error || 'The page is not ready.',
     };
   }
@@ -226,6 +231,7 @@ function inspection(provider) {
     attachments: false,
     error: '',
     send: Boolean(sendButton(provider, composer)),
+    users: userNodes(provider).length,
     detail: 'Composer is ready.',
   };
 }
