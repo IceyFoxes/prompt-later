@@ -1,6 +1,6 @@
 import { parseTarget } from './targets.js';
 import { nextOccurrence, validateSchedule } from './schedules.js';
-import { providerLabel } from './providers.js';
+import { PROVIDERS, providerLabel } from './providers.js';
 import { REASONS } from './outcomes.js';
 
 const extension = typeof chrome !== 'undefined' && Boolean(chrome.runtime?.sendMessage);
@@ -133,6 +133,21 @@ function setPending(value) {
   $('current-tab').disabled = disabled;
 }
 
+// Experimental providers are the ones nobody has confirmed on this machine, so
+// say so plainly until a page check or a real delivery proves otherwise.
+const checkedAt = provider => state.data?.settings?.checked?.[provider];
+
+function checkBadge(provider) {
+  const badge = document.createElement('small');
+  const checked = Boolean(checkedAt(provider));
+  badge.className = `provider-check ${checked ? 'provider-check-ok' : 'provider-check-unknown'}`;
+  badge.textContent = checked ? 'Checked' : 'Unchecked';
+  badge.title = checked
+    ? 'A page check or a delivered message confirmed this provider on this browser.'
+    : 'Not confirmed on this browser yet. Use Check page, or send once, to confirm it.';
+  return badge;
+}
+
 function showTarget(target) {
   const chip = $('provider-chip');
   chip.replaceChildren();
@@ -147,7 +162,7 @@ function showTarget(target) {
   if (target.experimental) {
     const badge = document.createElement('small');
     badge.textContent = ' Experimental';
-    chip.append(badge);
+    chip.append(badge, checkBadge(target.provider));
   }
 }
 
@@ -344,11 +359,15 @@ function formatCountdown(timestamp) {
 }
 
 const isWaiting = job => job.status === 'scheduled' && job.attempts > 0;
+// Still on schedule, but the last occurrences did not get through. Reporting
+// this as merely scheduled would hide a provider that has stopped working.
+const isFailing = job => job.status === 'scheduled' && !isWaiting(job) && (job.failures ?? 0) > 0;
 
 function statusLabel(job) {
   if (job.status === 'needs-attention') return 'Needs attention';
   if (job.status === 'paused') return 'Paused';
   if (isWaiting(job)) return 'Waiting to retry';
+  if (isFailing(job)) return job.failures === 1 ? 'Last run failed' : `Last ${job.failures} runs failed`;
   return job.status;
 }
 
@@ -359,8 +378,9 @@ function jobCard(job) {
   head.className = 'card-head';
   const provider = document.createElement('strong');
   provider.textContent = providerLabel(job.provider);
+  if (PROVIDERS[job.provider]?.experimental) provider.append(checkBadge(job.provider));
   const status = document.createElement('span');
-  status.className = `chip job-status job-status-${isWaiting(job) ? 'waiting' : job.status}`;
+  status.className = `chip job-status job-status-${isWaiting(job) ? 'waiting' : isFailing(job) ? 'failing' : job.status}`;
   status.textContent = statusLabel(job);
   head.append(provider, status);
   const message = document.createElement('div');
@@ -379,7 +399,9 @@ function jobCard(job) {
   const when = job.nextRunAt
     ? `${formatAbsolute(job.nextRunAt, job.schedule.timeZone)} (${job.schedule.timeZone}) · ${formatCountdown(job.nextRunAt)}`
     : `${job.lastDetail || (job.status === 'completed' ? 'Completed' : 'Paused')} (${job.schedule.timeZone})`;
-  meta.textContent = isWaiting(job) ? `${job.lastDetail} Trying again ${formatCountdown(job.nextRunAt)}.` : when;
+  meta.textContent = isWaiting(job)
+    ? `${job.lastDetail} Trying again ${formatCountdown(job.nextRunAt)}.`
+    : isFailing(job) ? `${job.lastDetail} Still scheduled: next attempt ${formatCountdown(job.nextRunAt)}.` : when;
   const actions = document.createElement('div');
   actions.className = 'card-actions';
   const running = job.status === 'running';

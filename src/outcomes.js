@@ -37,6 +37,18 @@ export const RETRY_DELAYS = [5 * 60 * 1000, 15 * 60 * 1000, 60 * 60 * 1000];
 export const RETRY_WINDOW = 2 * 60 * 60 * 1000;
 export const MAX_ATTEMPTS = RETRY_DELAYS.length;
 
+// These say the controls we rely on were not where we expected, which is what a
+// provider changing its page looks like. Other reasons say the page was simply
+// busy or occupied, which tells us nothing about whether the site still works.
+const LAYOUT_PROBLEMS = new Set([
+  REASONS.COMPOSER_MISSING,
+  REASONS.COMPOSER_NOT_READY,
+  REASONS.SEND_NOT_FOUND,
+  REASONS.AMBIGUOUS_CONTROLS,
+]);
+
+export const isLayoutProblem = reason => LAYOUT_PROBLEMS.has(reason);
+
 export function withReason(message, reason, extra = {}) {
   return Object.assign(new Error(message), { reason, ...extra });
 }

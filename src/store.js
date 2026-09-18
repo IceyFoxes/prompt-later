@@ -1,6 +1,7 @@
 import { parseTarget } from './targets.js';
 import { validateSchedule } from './schedules.js';
 import { MAX_ATTEMPTS } from './outcomes.js';
+import { PROVIDERS } from './providers.js';
 
 export const STORAGE_KEY = 'prompt-later.v1';
 export const VERSION = 1;
@@ -24,9 +25,15 @@ export function validateDraftPolicy(value) {
 function validateSettings(settings) {
   if (settings === undefined) return undefined;
   if (!settings || typeof settings !== 'object' || Array.isArray(settings)) throw new Error('Prompt Later data has invalid settings.');
-  if (Object.keys(settings).some(key => key !== 'draftPolicy')) throw new Error('Prompt Later data has unknown settings.');
+  if (Object.keys(settings).some(key => !['draftPolicy', 'checked'].includes(key))) throw new Error('Prompt Later data has unknown settings.');
   if (!DRAFT_POLICIES.has(settings.draftPolicy)) throw new Error('Prompt Later data has an invalid draft policy.');
-  return { draftPolicy: settings.draftPolicy };
+  if (settings.checked === undefined) return { draftPolicy: settings.draftPolicy };
+  if (!settings.checked || typeof settings.checked !== 'object' || Array.isArray(settings.checked)) throw new Error('Prompt Later data has invalid provider checks.');
+  for (const [provider, at] of Object.entries(settings.checked)) {
+    if (!Object.hasOwn(PROVIDERS, provider)) throw new Error('Prompt Later data records a check for an unknown provider.');
+    finiteTimestamp(at, 'provider check time');
+  }
+  return { draftPolicy: settings.draftPolicy, checked: { ...settings.checked } };
 }
 
 export function emptyState() {
@@ -64,6 +71,8 @@ function validateJob(job, ids) {
   if (!Number.isInteger(attempts) || attempts < 0 || attempts > MAX_ATTEMPTS) throw new Error('Prompt Later data has an invalid retry count.');
   if (retryUntil !== null) finiteTimestamp(retryUntil, 'retryUntil');
   if (attempts === 0 !== (retryUntil === null)) throw new Error('Prompt Later data has inconsistent retry state.');
+  const failures = job.failures === undefined ? 0 : job.failures;
+  if (!Number.isInteger(failures) || failures < 0) throw new Error('Prompt Later data has an invalid failure count.');
   if (['running', 'checking', 'dispatching'].includes(job.status) && !job.runId) throw new Error('Prompt Later data has an active job without a run ID.');
   if (job.status === 'scheduled' && (!job.enabled || job.nextRunAt === null)) throw new Error('Prompt Later data has an invalid scheduled job.');
   if (job.status === 'paused' && (job.enabled || job.nextRunAt !== null)) throw new Error('Prompt Later data has an invalid paused job.');

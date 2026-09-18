@@ -98,7 +98,9 @@ if (api) {
       if (message.action === 'CHECK_TARGET') {
         const target = parseTarget(payload.url);
         if (!(await permissionGranted(target))) throw new Error('Allow access to this provider before checking the page.');
-        return reply(sendResponse, await inspectTarget(api, target.url, { openIfMissing: payload.openIfMissing !== false }));
+        const inspection = await inspectTarget(api, target.url, { openIfMissing: payload.openIfMissing !== false });
+        if (inspection?.composer === true) await scheduler.markChecked(target.provider);
+        return reply(sendResponse, inspection);
       }
       if (message.action === 'UPSERT_JOB') {
         const target = parseTarget(payload.url);

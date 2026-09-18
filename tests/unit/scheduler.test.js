@@ -158,6 +158,70 @@ test('a waiting job delivers on its next attempt once the page is ready', async 
   assert.deepEqual(history.map(run => run.status), ['blocked', 'sent']);
 });
 
+function daily(at, extra = {}) {
+  return once(at, { schedule: { type: 'cron', expression: '0 7 * * *', timeZone: 'UTC' }, ...extra });
+}
+
+test('a repeating schedule survives a failed occurrence and moves to the next one', async () => {
+  const environment = make(
+    { ...emptyState(), jobs: [daily(900)] },
+    async () => ({ outcome: 'blocked', detail: 'no access', reason: 'permission-missing' }),
+  );
+  await environment.scheduler.initialize();
+  await environment.scheduler.tick();
+  const job = environment.store.data.jobs[0];
+  assert.equal(job.status, 'scheduled');
+  assert.equal(job.enabled, true);
+  assert.equal(job.failures, 1);
+  assert.ok(job.nextRunAt > 1000);
+  assert.equal(environment.store.data.history[0].status, 'blocked');
+});
+
+test('an uncertain repeating run moves on without resending the same occurrence', async () => {
+  let calls = 0;
+  const environment = make({ ...emptyState(), jobs: [daily(900)] }, async (job, run, mark) => {
+    calls += 1;
+    await mark();
+    throw new Error('lost');
+  });
+  await environment.scheduler.initialize();
+  await environment.scheduler.tick();
+  await environment.scheduler.tick();
+  assert.equal(calls, 1);
+  const job = environment.store.data.jobs[0];
+  assert.equal(job.lastOutcome, 'uncertain');
+  assert.equal(job.status, 'scheduled');
+  assert.equal(job.failures, 1);
+});
+
+test('consecutive repeating failures accumulate and reset on success', async () => {
+  let current = 1000;
+  let succeed = false;
+  const environment = make({ ...emptyState(), jobs: [daily(900)] }, async (job, run, mark) => {
+    if (!succeed) return { outcome: 'blocked', detail: 'no access', reason: 'permission-missing' };
+    await mark();
+    return { outcome: 'sent', detail: 'ack' };
+  }, () => current);
+  await environment.scheduler.initialize();
+  for (let day = 1; day <= 3; day += 1) {
+    await environment.scheduler.tick();
+    assert.equal(environment.store.data.jobs[0].failures, day);
+    current = environment.store.data.jobs[0].nextRunAt;
+  }
+  succeed = true;
+  await environment.scheduler.tick();
+  assert.equal(environment.store.data.jobs[0].failures, 0);
+  assert.equal(environment.store.data.jobs[0].status, 'scheduled');
+});
+
+test('a one-off job still asks for attention when it cannot be delivered', async () => {
+  const environment = make(undefined, async () => ({ outcome: 'blocked', detail: 'no access', reason: 'permission-missing' }));
+  await environment.scheduler.initialize();
+  await environment.scheduler.tick();
+  assert.equal(environment.store.data.jobs[0].status, 'needs-attention');
+  assert.equal(environment.store.data.jobs[0].enabled, false);
+});
+
 test('a permanent failure asks for attention without retrying', async () => {
   const environment = make(undefined, async () => ({ outcome: 'blocked', detail: 'no access', reason: 'permission-missing' }));
   await environment.scheduler.initialize();
@@ -387,4 +451,55 @@ test('unknown state version remains unchanged', async () => {
   const scheduler = new Scheduler({ store, deliver: async () => ({ outcome: 'sent' }), arm: () => {}, newId: id });
   await assert.rejects(() => scheduler.initialize());
   assert.deepEqual(store.data, bad);
+});
+
+
+test('a delivered message records the provider as checked', async () => {
+  const environment = make(undefined, async (job, run, mark) => { await mark(); return { outcome: 'sent', detail: 'ack' }; });
+  await environment.scheduler.initialize();
+  assert.equal(environment.store.data.settings, undefined);
+  await environment.scheduler.tick();
+  assert.equal(typeof environment.store.data.settings.checked.chatgpt, 'number');
+});
+
+test('controls that cannot be found clear the provider check once retries run out', async () => {
+  // Attempts already spent, so this failure is the terminal one.
+  const environment = make(
+    { ...emptyState(), jobs: [once(900, { attempts: 3, retryUntil: 900 + 5 * 60 * 1000 })], settings: { draftPolicy: 'wait', checked: { chatgpt: 500 } } },
+    async () => ({ outcome: 'blocked', detail: 'no send control', reason: 'send-not-found' }),
+  );
+  await environment.scheduler.initialize();
+  await environment.scheduler.tick();
+  assert.equal(environment.store.data.jobs[0].status, 'needs-attention');
+  assert.equal(environment.store.data.settings.checked.chatgpt, undefined);
+});
+
+test('a missing control still retries before the provider check is cleared', async () => {
+  const environment = make(
+    { ...emptyState(), jobs: [once(900)], settings: { draftPolicy: 'wait', checked: { chatgpt: 500 } } },
+    async () => ({ outcome: 'blocked', detail: 'no send control', reason: 'send-not-found' }),
+  );
+  await environment.scheduler.initialize();
+  await environment.scheduler.tick();
+  assert.equal(environment.store.data.jobs[0].attempts, 1);
+  assert.equal(environment.store.data.settings.checked.chatgpt, 500);
+});
+
+test('a page or provider being busy leaves the provider check alone', async () => {
+  const environment = make(
+    { ...emptyState(), jobs: [once(900, { attempts: 3, retryUntil: 900 + 5 * 60 * 1000 })], settings: { draftPolicy: 'wait', checked: { chatgpt: 500 } } },
+    async () => ({ outcome: 'blocked', detail: 'still replying', reason: 'busy' }),
+  );
+  await environment.scheduler.initialize();
+  await environment.scheduler.tick();
+  assert.equal(environment.store.data.jobs[0].status, 'needs-attention');
+  assert.equal(environment.store.data.settings.checked.chatgpt, 500);
+});
+
+test('marking a check rejects an unknown provider', async () => {
+  const environment = make();
+  await environment.scheduler.initialize();
+  await assert.rejects(() => environment.scheduler.markChecked('not-a-provider'));
+  await environment.scheduler.markChecked('claude');
+  assert.equal(typeof environment.store.data.settings.checked.claude, 'number');
 });

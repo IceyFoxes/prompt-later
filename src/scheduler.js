@@ -1,12 +1,21 @@
 import { nextOccurrence, validateSchedule } from './schedules.js';
 import { draftPolicyOf, pruneHistory, validateDraftPolicy, validateState } from './store.js';
+import { PROVIDERS } from './providers.js';
 import { parseTarget } from './targets.js';
-import { isTemporary, REASONS, RETRY_DELAYS, RETRY_WINDOW } from './outcomes.js';
+import { isLayoutProblem, isTemporary, REASONS, RETRY_DELAYS, RETRY_WINDOW } from './outcomes.js';
 
 const LATE_LIMIT = 5 * 60 * 1000;
 const ACTIVE_RUNS = new Set(['checking', 'dispatching']);
 const copy = value => structuredClone(value);
 const isRecurring = job => job.schedule.type !== 'once';
+
+function setChecked(state, provider, at) {
+  const settings = state.settings || { draftPolicy: 'wait' };
+  const checked = { ...(settings.checked || {}) };
+  if (at === null) delete checked[provider];
+  else checked[provider] = at;
+  state.settings = { ...settings, checked };
+}
 
 export class Scheduler {
   constructor({ store, deliver, arm, now = Date.now, newId = () => crypto.randomUUID() }) {
@@ -113,6 +122,7 @@ export class Scheduler {
         lastDetail: '',
         attempts: 0,
         retryUntil: null,
+        failures: 0,
       };
       if (existing) draft.jobs[draft.jobs.indexOf(existing)] = job;
       else draft.jobs.push(job);
@@ -128,6 +138,7 @@ export class Scheduler {
       if (job.status === 'running') throw new Error('Running jobs cannot be paused.');
       job.attempts = 0;
       job.retryUntil = null;
+      job.failures = 0;
       if (enabled) {
         const next = nextOccurrence(job.schedule, this.now());
         if (!next) throw new Error('Reschedule this one-off job for a future time.');
@@ -141,6 +152,15 @@ export class Scheduler {
       }
       job.updatedAt = this.now();
       return job;
+    });
+  }
+
+  // Recorded per provider rather than per job, because it is the provider's page
+  // that either still matches what we look for or does not.
+  async markChecked(provider) {
+    return this._mutate(async draft => {
+      if (!Object.hasOwn(PROVIDERS, provider)) throw new Error('Unknown provider.');
+      setChecked(draft, provider, this.now());
     });
   }
 
@@ -218,6 +238,8 @@ export class Scheduler {
       if (outcome === 'sent') {
         job.attempts = 0;
         job.retryUntil = null;
+        job.failures = 0;
+        setChecked(draft, job.provider, finishedAt);
         if (isRecurring(job)) {
           const next = nextOccurrence(job.schedule, Math.max(finishedAt, run.dueAt));
           if (Number.isFinite(next)) {
@@ -239,9 +261,22 @@ export class Scheduler {
         if (retryAt === null) {
           job.attempts = 0;
           job.retryUntil = null;
-          job.nextRunAt = null;
-          job.status = 'needs-attention';
-          job.enabled = false;
+          // A repeating schedule loses only the occurrence it failed on. Ending
+          // the whole schedule over one bad run costs far more than trying
+          // again tomorrow, and an uncertain run is safe to move past because
+          // the next occurrence is a different message, not a resend.
+          if (isLayoutProblem(result?.reason)) setChecked(draft, job.provider, null);
+          const next = isRecurring(job) ? nextOccurrence(job.schedule, Math.max(finishedAt, run.dueAt)) : null;
+          if (Number.isFinite(next)) {
+            job.failures = (job.failures ?? 0) + 1;
+            job.nextRunAt = next;
+            job.status = 'scheduled';
+            job.enabled = true;
+          } else {
+            job.nextRunAt = null;
+            job.status = 'needs-attention';
+            job.enabled = false;
+          }
         } else {
           job.retryUntil = job.retryUntil ?? run.dueAt + RETRY_WINDOW;
           job.attempts = (job.attempts ?? 0) + 1;
