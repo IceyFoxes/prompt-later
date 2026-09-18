@@ -180,7 +180,7 @@ test('R5 missing, ambiguous, modal, read-only, and missing-send fixtures fail cl
       await provider.goto(target);
       await dueState(page);
       await tickFromPage(page);
-      await expect(page.locator('#job-list')).toContainText(item.permanent ? 'Needs attention' : 'Waiting to retry');
+      await expect(page.locator('#job-list')).toContainText('Needs attention');
       await expect(page.locator('#job-list .meta')).toContainText(item.detail);
       await expect(provider.locator('#messages')).toBeEmpty();
       await provider.close();
@@ -195,7 +195,7 @@ test('R6 URL and attachment races block without clicking and retain the draft', 
     await provider.goto('https://chatgpt.com/c/race');
     await dueState(page);
     await tickFromPage(page);
-    await expect(page.locator('#job-list')).toContainText('Waiting to retry');
+    await expect(page.locator('#job-list')).toContainText('Needs attention');
     await expect(provider.locator('#messages')).toBeEmpty();
     await expect(provider.locator('#prompt-textarea')).toHaveValue('Race prompt');
     await provider.close();
@@ -206,7 +206,7 @@ test('R6 URL and attachment races block without clicking and retain the draft', 
     await provider.goto('https://chatgpt.com/c/attachment');
     await dueState(page);
     await tickFromPage(page);
-    await expect(page.locator('#job-list')).toContainText('Waiting to retry');
+    await expect(page.locator('#job-list')).toContainText('Needs attention');
     await expect(provider.locator('#messages')).toBeEmpty();
     await expect(provider.locator('#prompt-textarea')).toHaveValue('Attachment prompt');
     await provider.close();
@@ -244,7 +244,7 @@ test('R8 protects existing textarea and contenteditable drafts', async () => {
       await provider.locator(item.selector).fill('Existing user draft');
       await dueState(page);
       await tickFromPage(page);
-      await expect(page.locator('#job-list')).toContainText('Waiting to retry');
+      await expect(page.locator('#job-list')).toContainText('Needs attention');
       if (item.kind === 'textarea') await expect(provider.locator(item.selector)).toHaveValue('Existing user draft');
       else await expect(provider.locator(item.selector)).toHaveText('Existing user draft');
       await provider.close();
@@ -367,4 +367,27 @@ test('R11 real MV3 alarm delivers after extension UI closes and deletion preserv
     await dashboard.close();
     await provider.close();
   });
+});
+
+
+test('meaningful trailing newlines and non-breaking spaces are not accepted after page mutation', async () => {
+  for (const [index, message] of ['trailing newline\n', 'non\u00a0breaking'].entries()) {
+    await withExtension({}, async ({ page, context }) => {
+      const targetUrl = `https://chatgpt.com/c/text-mutation-${index}`;
+      const provider = await context.newPage();
+      await provider.goto(targetUrl);
+      await provider.locator('#prompt-textarea').evaluate((editor, index) => {
+        editor.addEventListener('input', () => {
+          editor.value = index === 0 ? editor.value.replace(/\n$/, '') : editor.value.replace(/\u00a0/g, ' ');
+        }, { capture: true });
+      }, index);
+      await saveJob(page, targetUrl, message);
+      await dueState(page);
+      await tickFromPage(page);
+      await expect(page.locator('#job-list')).toContainText('Needs attention');
+      await expect(provider.locator('[data-message-author-role="user"]')).toHaveCount(0);
+      expect(await provider.evaluate(() => window.__sendClicks || 0)).toBe(0);
+      await provider.close();
+    });
+  }
 });

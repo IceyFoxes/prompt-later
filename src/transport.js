@@ -2,8 +2,8 @@ import { parseTarget, sameTarget } from './targets.js';
 import { REASONS, withReason } from './outcomes.js';
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-// A missing reason means "unclassified", which the scheduler treats as worth
-// retrying. Keep it off the object entirely rather than sending an empty key.
+// Keep the wire shape compact when a page did not provide a machine-readable
+// reason; user-facing detail is still returned.
 const result = (outcome, detail, reason) => (reason === undefined ? { outcome, detail } : { outcome, detail, reason });
 
 async function hasPermission(chromeApi, origin) {

@@ -364,3 +364,47 @@ test('overdue jobs apply both late policies exactly once without any unlock', as
     await provider.close();
   });
 });
+
+
+test('a persistent background vault failure gets one recovery attempt, not an endless alarm loop', async () => {
+  await withExtension({}, async ({ page }) => {
+    await saveJob(page, 'Recovery alarm fixture');
+    await page.evaluate(async key => {
+      const current = (await chrome.storage.local.get(key))[key];
+      const bytes = Uint8Array.from(atob(current.data), character => character.charCodeAt(0));
+      bytes[0] ^= 1;
+      current.data = btoa(String.fromCharCode(...bytes));
+      await chrome.storage.local.set({ [key]: current });
+      await chrome.alarms.create('prompt-later:due', { when: Date.now() });
+    }, vaultKey);
+    await expect.poll(() => page.evaluate(async () => {
+      const alarm = await chrome.alarms.get('prompt-later:recovery');
+      return alarm?.scheduledTime || 0;
+    })).toBeGreaterThan(Date.now());
+    await page.evaluate(() => chrome.alarms.create('prompt-later:recovery', { when: Date.now() }));
+    await expect.poll(() => page.evaluate(async () => Boolean(await chrome.alarms.get('prompt-later:recovery')))).toBe(false);
+    await expect.poll(() => page.evaluate(() => chrome.action.getBadgeText({}))).toBe('!');
+  });
+});
+
+test('the recovery alarm restores the real due alarm after a transient vault failure', async () => {
+  await withExtension({}, async ({ page }) => {
+    await saveJob(page, 'Transient recovery fixture');
+    const original = await envelope(page);
+    await page.evaluate(async ({ key, original }) => {
+      const damaged = structuredClone(original);
+      const bytes = Uint8Array.from(atob(damaged.data), character => character.charCodeAt(0));
+      bytes[0] ^= 1;
+      damaged.data = btoa(String.fromCharCode(...bytes));
+      await chrome.storage.local.set({ [key]: damaged });
+      await chrome.alarms.create('prompt-later:due', { when: Date.now() });
+    }, { key: vaultKey, original });
+    await expect.poll(() => page.evaluate(async () => Boolean(await chrome.alarms.get('prompt-later:recovery')))).toBe(true);
+    await page.evaluate(async ({ key, original }) => {
+      await chrome.storage.local.set({ [key]: original });
+      await chrome.alarms.create('prompt-later:recovery', { when: Date.now() });
+    }, { key: vaultKey, original });
+    await expect.poll(() => page.evaluate(async () => Boolean(await chrome.alarms.get('prompt-later:due')))).toBe(true);
+    await expect.poll(() => page.evaluate(() => chrome.action.getBadgeText({}))).toBe('');
+  });
+});

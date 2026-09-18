@@ -105,7 +105,7 @@ testWithExtension('does not click when the selected composer already has a draft
   await provider.locator('#prompt-textarea').fill('Existing draft');
   await dueState(page);
   await tickFromPage(page);
-  await expect(page.locator('#job-list')).toContainText('Waiting to retry');
+  await expect(page.locator('#job-list')).toContainText('Needs attention');
   await expect(provider.locator('#prompt-textarea')).toHaveValue('Existing draft');
   await provider.close();
 });
@@ -125,7 +125,6 @@ testWithExtension('the stop draft setting holds the message for attention instea
   await dueState(page);
   await tickFromPage(page);
   await expect(page.locator('#job-list')).toContainText('Needs attention');
-  await expect(page.locator('#job-list')).not.toContainText('Waiting to retry');
   await expect(provider.locator('#prompt-textarea')).toHaveValue('Existing draft');
   await expect(provider.locator('[data-message-author-role="user"]')).toHaveCount(0);
   // The choice survives a reload of the dashboard.
@@ -145,7 +144,7 @@ testWithExtension('saving warns when the composer already holds text', async ({ 
   await page.locator('#save').click();
   await expect(page.locator('#form-status')).toContainText('Message scheduled.');
   await expect(page.locator('#form-status')).toContainText('has text in its composer right now');
-  await expect(page.locator('#form-status')).toContainText('wait and try again');
+  await expect(page.locator('#form-status')).toContainText('held for your attention');
   await provider.close();
 });
 
@@ -257,4 +256,21 @@ testWithExtension('compact popup aligns recurring controls and explains invalid 
   await expect(popup.locator('#current-tab-dialog')).toContainText('fresh provider homepage');
   await popup.close();
   await source.close();
+});
+
+
+testWithExtension('preserves meaningful spaces and indentation in a scheduled prompt', async ({ environment }) => {
+  const { page, context } = environment;
+  const message = '  line  one\n    indented  line  ';
+  await page.locator('#url').fill('https://chatgpt.com/c/whitespace');
+  await page.locator('#when').selectOption('1m');
+  await page.locator('#message').fill(message);
+  await page.locator('#save').click();
+  const provider = await context.newPage();
+  await provider.goto('https://chatgpt.com/c/whitespace');
+  await dueState(page);
+  await tickFromPage(page);
+  const delivered = await provider.locator('[data-message-author-role="user"]').evaluate(node => node.textContent);
+  expect(delivered).toBe(message);
+  await provider.close();
 });

@@ -1,6 +1,5 @@
 import { parseTarget } from './targets.js';
 import { validateSchedule } from './schedules.js';
-import { MAX_ATTEMPTS } from './outcomes.js';
 
 export const STORAGE_KEY = 'prompt-later.v1';
 export const VERSION = 1;
@@ -58,12 +57,6 @@ function validateJob(job, ids) {
   finiteTimestamp(job.updatedAt, 'updatedAt');
   if (typeof job.enabled !== 'boolean' || !JOB_STATUSES.has(job.status) || (job.runId !== null && typeof job.runId !== 'string') || (job.lastOutcome !== null && !RUN_STATUSES.has(job.lastOutcome)) || typeof job.lastDetail !== 'string') throw new Error('Prompt Later data has invalid job state.');
   if (job.nextRunAt !== null) finiteTimestamp(job.nextRunAt, 'nextRunAt');
-  // Retry bookkeeping was added later, so data saved before it is read as clean.
-  const attempts = job.attempts === undefined ? 0 : job.attempts;
-  const retryUntil = job.retryUntil === undefined ? null : job.retryUntil;
-  if (!Number.isInteger(attempts) || attempts < 0 || attempts > MAX_ATTEMPTS) throw new Error('Prompt Later data has an invalid retry count.');
-  if (retryUntil !== null) finiteTimestamp(retryUntil, 'retryUntil');
-  if (attempts === 0 !== (retryUntil === null)) throw new Error('Prompt Later data has inconsistent retry state.');
   if (['running', 'checking', 'dispatching'].includes(job.status) && !job.runId) throw new Error('Prompt Later data has an active job without a run ID.');
   if (job.status === 'scheduled' && (!job.enabled || job.nextRunAt === null)) throw new Error('Prompt Later data has an invalid scheduled job.');
   if (job.status === 'paused' && (job.enabled || job.nextRunAt !== null)) throw new Error('Prompt Later data has an invalid paused job.');
@@ -71,7 +64,8 @@ function validateJob(job, ids) {
     throw new Error('Prompt Later data has an invalid completed job.');
   }
   if (job.status === 'needs-attention' && job.enabled) throw new Error('Prompt Later data has an enabled attention job.');
-  return { ...job, schedule };
+  const { attempts: _attempts, retryUntil: _retryUntil, failures: _failures, ...current } = job;
+  return { ...current, schedule };
 }
 
 function validateRun(run, ids) {

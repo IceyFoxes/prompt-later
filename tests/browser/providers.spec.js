@@ -91,7 +91,7 @@ for (const provider of providers) {
     await withTarget(provider, { draft: 'Do not overwrite' }, async ({ page, target }) => {
       await save(page, provider.target, `Provider test: ${provider.id}`);
       await runDue(page);
-      await expect(page.locator('#job-list')).toContainText('Waiting to retry');
+      await expect(page.locator('#job-list')).toContainText('Needs attention');
       expect(await editorText(target, provider.editor)).toBe('Do not overwrite');
       await expect(target.locator(provider.user)).toHaveCount(0);
       await expectNoClicks(target);
@@ -117,7 +117,7 @@ for (const item of blockedCases) {
     await withTarget(provider, item.fixture, async ({ page, target }) => {
       await save(page, provider.target, 'Blocked provider test');
       await runDue(page);
-      await expect(page.locator('#job-list')).toContainText(item.permanent ? 'Needs attention' : 'Waiting to retry');
+      await expect(page.locator('#job-list')).toContainText('Needs attention');
       expect(await editorText(target, provider.editor)).toBe(item.remaining);
       await expect(target.locator(provider.user)).toHaveCount(0);
       await expectNoClicks(target);
@@ -188,7 +188,7 @@ test('Copilot never borrows an unrelated submit button through document body', a
     });
     await save(page, provider.target, 'Unrelated submit test');
     await runDue(page);
-    await expect(page.locator('#job-list')).toContainText('Waiting to retry');
+    await expect(page.locator('#job-list')).toContainText('Needs attention');
     await expectNoClicks(target);
     await expect(target.locator(provider.user)).toHaveCount(0);
     expect((await stored(page)).history.at(-1).status).toBe('blocked');

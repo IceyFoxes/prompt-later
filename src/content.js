@@ -39,8 +39,16 @@ function textOf(element) {
   return element.innerText || element.textContent || '';
 }
 
-function normalized(value) {
-  return value.replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+function hasText(element) {
+  return String(textOf(element) || '').replace(/\u00a0/g, ' ').trim().length > 0;
+}
+
+function sameText(left, right) {
+  return String(left ?? '') === String(right ?? '');
+}
+
+function sameComposerText(composer, message) {
+  return sameText(textOf(composer), message);
 }
 
 function editor(provider) {
@@ -63,7 +71,7 @@ async function waitForComposer(provider, url) {
     try { composer = editor(provider); } catch (error) {
       if (error.code !== 'COMPOSER_NOT_FOUND') throw error;
     }
-    if (composer && normalized(textOf(composer))) throw withReason('The composer already contains a draft; it was left untouched.', REASONS.DRAFT);
+    if (composer && hasText(composer)) throw withReason('The composer already contains a draft; it was left untouched.', REASONS.DRAFT);
     if (composer && attachments(provider, composer)) throw withReason('Pending attachments must be removed before sending.', REASONS.ATTACHMENTS);
     if (busy(provider)) throw withReason('The provider is still generating a response.', REASONS.BUSY);
     const error = alertState();
@@ -190,7 +198,7 @@ function matchingUsers(provider, message) {
   const config = PROVIDERS[provider];
   return userNodes(provider).filter(node => {
     const textNode = config.userTextSelector ? node.querySelector(config.userTextSelector) || node : node;
-    return normalized(textOf(textNode)) === normalized(message);
+    return sameText(textOf(textNode), message) || sameText(textNode.textContent, message);
   });
 }
 
@@ -205,7 +213,7 @@ function targetMatches(url) {
 
 function inspection(provider) {
   const composer = editor(provider);
-  const draft = normalized(textOf(composer));
+  const draft = hasText(composer);
   const busyState = busy(provider);
   const attachmentState = attachments(provider, composer);
   const error = alertState();
@@ -213,7 +221,7 @@ function inspection(provider) {
     return {
       status: 'blocked',
       composer: true,
-      draft: Boolean(draft),
+      draft,
       busy: busyState,
       attachments: attachmentState,
       error,
@@ -236,6 +244,10 @@ function inspection(provider) {
 }
 
 function preflight(provider, message, runId, url) {
+  const now = Date.now();
+  for (const [id, reservation] of state.reservations) {
+    if (reservation.expires < now) state.reservations.delete(id);
+  }
   if (state.commits.has(runId)) return { ready: false, detail: 'This run is already being handled.', reason: REASONS.RESERVATION_STALE };
   const previous = state.reservations.get(runId);
   if (previous) {
@@ -245,7 +257,7 @@ function preflight(provider, message, runId, url) {
     return { ready: true, detail: 'Composer is ready.' };
   }
   const composer = editor(provider);
-  if (normalized(textOf(composer))) throw withReason('The composer already contains a draft; it was left untouched.', REASONS.DRAFT);
+  if (hasText(composer)) throw withReason('The composer already contains a draft; it was left untouched.', REASONS.DRAFT);
   if (attachments(provider, composer)) throw withReason('Pending attachments must be removed before sending.', REASONS.ATTACHMENTS);
   if (busy(provider)) throw withReason('The provider is still generating a response.', REASONS.BUSY);
   const error = alertState();
@@ -280,7 +292,7 @@ function insert(composer, message) {
     range.collapse(true);
     selection.addRange(range);
     document.execCommand('insertText', false, message);
-    if (!normalized(textOf(composer))) {
+    if (!hasText(composer)) {
       const clipboardData = new DataTransfer();
       clipboardData.setData('text/plain', message);
       composer.dispatchEvent(new ClipboardEvent('paste', {
@@ -290,7 +302,7 @@ function insert(composer, message) {
       }));
     }
   }
-  return normalized(textOf(composer)) === normalized(message);
+  return sameComposerText(composer, message);
 }
 
 // A tab that was just reopened finishes loading before its composer framework
@@ -319,7 +331,7 @@ function renotify(composer, message) {
       if (textOf(composer) !== before) document.execCommand('delete');
     }
   } catch { /* fall through to the text check below */ }
-  return normalized(textOf(composer)) === normalized(message);
+  return sameComposerText(composer, message);
 }
 
 async function waitForButton(provider, composer, message) {
@@ -360,7 +372,7 @@ async function commit(provider, url, runId, message, record) {
   if (!targetMatches(url)) throw withReason('The conversation changed before sending.', REASONS.TARGET_MISMATCH);
   const composer = editor(provider);
   if (composer !== reservation.composer || !composer.isConnected) throw withReason('The composer changed before sending.', REASONS.PAGE_RACE);
-  if (normalized(textOf(composer))) throw withReason('The composer changed before sending; the message remains in the composer.', REASONS.DRAFT);
+  if (hasText(composer)) throw withReason('The composer changed before sending; the message remains in the composer.', REASONS.DRAFT);
   if (busy(provider) || attachments(provider, composer) || alertState()) throw withReason('The page is no longer ready to send.', REASONS.BUSY);
   const inserted = insert(composer, message);
   if (!inserted) throw withReason('Message insertion was not acknowledged; the message remains in the composer.', REASONS.INSERTION_FAILED);
@@ -371,7 +383,7 @@ async function commit(provider, url, runId, message, record) {
       : withReason('The explicit send control was not found; the message remains in the composer.', REASONS.SEND_NOT_FOUND);
   }
   if (!targetMatches(url) || !composer.isConnected || editor(provider) !== composer
-      || normalized(textOf(composer)) !== normalized(message) || busy(provider) || attachments(provider, composer) || alertState()
+      || !sameComposerText(composer, message) || busy(provider) || attachments(provider, composer) || alertState()
       || !sendEnabled(provider, button)
       || (PROVIDERS[provider].enhanced && sendButton(provider, composer) !== button)) {
     throw withReason('The page changed before sending; the message remains in the composer.', REASONS.PAGE_RACE);
@@ -383,7 +395,7 @@ async function commit(provider, url, runId, message, record) {
     if (!targetMatches(url)) return { outcome: 'uncertain', detail: 'The conversation changed after clicking send.' };
     if (alertState()) return { outcome: 'uncertain', detail: 'The site reported an error after clicking send.' };
     if (matchingUsers(provider, message).length > reservation.baseline
-        && composer.isConnected && !normalized(textOf(composer))) {
+        && composer.isConnected && !hasText(composer)) {
       return { outcome: 'sent', detail: 'The site acknowledged submission.' };
     }
     await new Promise(resolve => setTimeout(resolve, 100));
@@ -403,6 +415,9 @@ function commitOnce(provider, message) {
       return { outcome: record.clicked ? 'uncertain' : 'blocked', detail: error.message, reason: error.reason };
     } finally {
       state.reservations.delete(message.runId);
+      setTimeout(() => {
+        if (state.commits.get(message.runId) === record) state.commits.delete(message.runId);
+      }, 5 * 60 * 1000);
     }
   })();
   return record.promise;

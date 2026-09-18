@@ -135,7 +135,7 @@ test('cold navigation while waiting blocks without inserting or sending', async 
   });
 });
 
-test('cold missing composer has a bounded wait and is not re-delivered immediately', async () => {
+test('cold missing composer has a bounded wait and asks for attention', async () => {
   test.setTimeout(45000);
   await withExtension({ missingEditor: true, responseDelayMs: 500, responseDelayPath: '/c/cold-target' }, async ({ page, context }) => {
     await saveDueJob(page);
@@ -147,7 +147,7 @@ test('cold missing composer has a bounded wait and is not re-delivered immediate
     const stored = await delivery;
     expect(stored.history.at(-1).status).toBe('blocked');
     expect(stored.history.at(-1).detail).toContain('did not become ready');
-    expect(stored.jobs[0]).toMatchObject({ status: 'scheduled', enabled: true, attempts: 1 });
+    expect(stored.jobs[0]).toMatchObject({ status: 'needs-attention', enabled: false });
     await expect(target.locator('[data-message-author-role="user"]')).toHaveCount(0);
     await tickFromPage(page);
     expect((await readState(page)).history).toHaveLength(1);
