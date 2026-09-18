@@ -72,16 +72,22 @@ export async function encryptDeviceState(state, key, keyId = DEVICE_KEY_ID) {
   }
 }
 
-export async function decryptDeviceState(envelope, key) {
+// Decryption and validation are separate so a readable vault holding one
+// unusable job can be told apart from a damaged or wrongly keyed one.
+export async function decryptDevicePayload(envelope, key) {
   validateDeviceEnvelope(envelope);
   let plaintext;
   try {
     if (!validDeviceKey(key)) throw new Error('Invalid device key.');
     plaintext = new Uint8Array(await cryptoApi.subtle.decrypt({ name: 'AES-GCM', iv: decode(envelope.iv, 12), additionalData: deviceAdditionalData(envelope.keyId), tagLength: 128 }, key, decode(envelope.data)));
-    return validateState(JSON.parse(decoder.decode(plaintext)));
+    return JSON.parse(decoder.decode(plaintext));
   } catch {
     throw new Error('The automatic encryption key is unavailable or the saved vault is damaged. Nothing was reset.');
   } finally {
     plaintext?.fill(0);
   }
+}
+
+export async function decryptDeviceState(envelope, key) {
+  return validateState(await decryptDevicePayload(envelope, key));
 }

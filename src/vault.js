@@ -1,8 +1,9 @@
-import { emptyState, STORAGE_KEY, validateState } from './store.js';
+import { emptyState, repairState, STORAGE_KEY, validateState } from './store.js';
 import { createDeviceKeyStore } from './device-key-store.js';
-import { VAULT_KEY, decryptDeviceState, encryptDeviceState, vaultMode } from './vault-crypto.js';
+import { VAULT_KEY, decryptDevicePayload, decryptDeviceState, encryptDeviceState, vaultMode } from './vault-crypto.js';
 
 export const STAGED_KEY = 'prompt-later.vault-next.v1';
+export const BACKUP_KEY = 'prompt-later.vault-unreadable.v1';
 const queues = new WeakMap();
 const has = (data, key) => Object.hasOwn(data, key);
 function same(left, right) {
@@ -26,7 +27,7 @@ export function createVaultStore(api, deviceKeys = createDeviceKeyStore()) {
     return result;
   };
   const records = () => api.storage.local.get([VAULT_KEY, STORAGE_KEY, STAGED_KEY]);
-  const readyStatus = () => ({ configured: true, mode: 'device', legacyData: false });
+  const readyStatus = (dropped = []) => ({ configured: true, mode: 'device', legacyData: false, dropped });
 
   async function unchanged(expected, keys = [VAULT_KEY, STORAGE_KEY, STAGED_KEY]) {
     const latest = await records();
@@ -63,6 +64,13 @@ export function createVaultStore(api, deviceKeys = createDeviceKeyStore()) {
     }
   }
 
+  // Keep the first record that needed repair, so the entries left out of the
+  // usable state are still recoverable rather than lost on the next write.
+  async function keepUnreadable(envelope) {
+    const existing = await api.storage.local.get(BACKUP_KEY);
+    if (!has(existing, BACKUP_KEY)) await api.storage.local.set({ [BACKUP_KEY]: envelope });
+  }
+
   // A staged record can only be left over from an interrupted migration by an
   // older version. Once a verified vault exists it holds nothing unique.
   async function dropStage(data) {
@@ -75,10 +83,19 @@ export function createVaultStore(api, deviceKeys = createDeviceKeyStore()) {
       const envelope = data[VAULT_KEY];
       vaultMode(envelope);
       const key = await deviceKeys.get(envelope.keyId);
-      const state = await decryptDeviceState(envelope, key);
+      // A damaged record or wrong key still fails here, unrepaired.
+      const payload = await decryptDevicePayload(envelope, key);
+      let state;
+      let dropped = [];
+      try {
+        state = validateState(payload);
+      } catch {
+        ({ state, dropped } = repairState(payload));
+        await keepUnreadable(envelope);
+      }
       await cleanLegacy(state, envelope, key, data);
       await dropStage(data);
-      return { status: readyStatus(), envelope, key, state };
+      return { status: readyStatus(dropped), envelope, key, state };
     }
     const key = await deviceKeys.getOrCreate();
     const state = has(data, STORAGE_KEY) ? validateState(data[STORAGE_KEY]) : emptyState();

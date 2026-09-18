@@ -92,6 +92,7 @@
       <aside class="panel list-panel" aria-labelledby="list-title">
         <div class="list-heading"><div><p class="eyebrow">Your queue</p><h2 id="list-title">Saved messages</h2></div><div class="list-heading-actions"><span id="job-count" class="count" aria-label="Saved message count"></span><button id="popup-queue-toggle" class="queue-toggle" type="button" aria-controls="job-list" aria-expanded="false" hidden>Show</button></div></div>
         <p class="queue-note"><span class="awake-dot" aria-hidden="true"></span><span>Keep the browser open and computer awake. Delivery can be delayed and account limits still apply.</span></p>
+        <p id="dropped-notice" class="notice notice-warning" role="status" hidden></p>
         <div id="job-list" class="stack"></div>
         <button id="job-list-toggle" class="list-toggle" type="button" hidden></button>
         <details class="privacy"><summary><span class="privacy-icon" aria-hidden="true">✓</span><span><strong>Private by default</strong><small>Encrypted and stored on this device</small></span><span class="summary-chevron" aria-hidden="true"></span></summary><p>Saved messages, conversation URLs, schedules, and activity are encrypted locally using a browser-held device key by default. Details are under Advanced privacy in the full dashboard.</p><p>Messages are sent to the selected provider using your signed-in account. No extension backend, telemetry, or AI API key is used. Completed jobs remain until deleted; activity is retained separately.</p></details>

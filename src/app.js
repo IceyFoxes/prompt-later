@@ -539,6 +539,21 @@ function renderPrivacySettings() {
   $('privacy-settings').hidden = !(!state.popup && isUnlocked());
 }
 
+// A queue that quietly came back smaller would be worse than the failure it
+// replaced, so say what was set aside and that it was not deleted.
+function renderDroppedNotice(dropped) {
+  const notice = $('dropped-notice');
+  const count = Array.isArray(dropped) ? dropped.length : 0;
+  notice.hidden = count === 0;
+  if (!count) return;
+  const jobs = dropped.filter(item => item.kind === 'job').length;
+  const runs = count - jobs;
+  const parts = [];
+  if (jobs) parts.push(`${jobs} saved ${jobs === 1 ? 'message' : 'messages'}`);
+  if (runs) parts.push(`${runs} activity ${runs === 1 ? 'entry' : 'entries'}`);
+  text(notice, `${parts.join(' and ')} could not be read and ${count === 1 ? 'was' : 'were'} left out. Everything else is unaffected, and nothing was deleted: the original encrypted copy is kept so a later version can still recover it. Reason: ${dropped[0].detail}`);
+}
+
 function renderVault(status, error = '') {
   const unavailable = Boolean(error) || !status;
   state.vault = status ? { ...status, unavailable } : null;
@@ -547,6 +562,7 @@ function renderVault(status, error = '') {
   $('vault-description').textContent = 'Try again to open your saved data. Nothing has been reset.';
   $('vault-retry').hidden = !error;
   text($('vault-status'), error);
+  renderDroppedNotice(status?.dropped);
   renderPrivacySettings();
   renderDeliverySettings();
   if (unavailable) clearSchedulerView();
@@ -563,7 +579,7 @@ async function load() {
     if (!result?.ok) throw new Error(result?.error || 'Could not read vault status.');
     status = result.data;
     if (!status || status.configured !== true || status.mode !== 'device'
-        || typeof status.legacyData !== 'boolean') throw new Error('The vault status is unreadable.');
+        || typeof status.legacyData !== 'boolean' || !Array.isArray(status.dropped)) throw new Error('The vault status is unreadable.');
     const data = await send('GET_STATE');
     if (generation !== state.loadGeneration) return;
     if (!data?.ok) throw new Error(data?.error || 'Could not read saved messages.');

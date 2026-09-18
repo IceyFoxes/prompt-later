@@ -4,7 +4,8 @@ import { webcrypto } from 'node:crypto';
 import { emptyState } from '../../src/store.js';
 
 globalThis.crypto ??= webcrypto;
-const { createVaultStore, STAGED_KEY } = await import('../../src/vault.js');
+const { BACKUP_KEY, createVaultStore, STAGED_KEY } = await import('../../src/vault.js');
+const { DEVICE_KEY_ID } = await import('../../src/device-key-store.js');
 const { VAULT_KEY, decryptDeviceState, encryptDeviceState } = await import('../../src/vault-crypto.js');
 const LEGACY_KEY = 'prompt-later.v1';
 const legacy = {
@@ -64,6 +65,26 @@ function flip(value) {
   return bytes.toString('base64');
 }
 
+// Production code will not encrypt a state it considers invalid, which is
+// correct, so a record holding an unusable job has to be built here.
+async function sealPayload(payload, key) {
+  const iv = webcrypto.getRandomValues(new Uint8Array(12));
+  const data = await webcrypto.subtle.encrypt({
+    name: 'AES-GCM',
+    iv,
+    additionalData: new TextEncoder().encode(`prompt-later:vault:2:device:${DEVICE_KEY_ID}`),
+    tagLength: 128,
+  }, key, new TextEncoder().encode(JSON.stringify(payload)));
+  return {
+    version: 2,
+    mode: 'device',
+    cipher: 'AES-GCM-256',
+    keyId: DEVICE_KEY_ID,
+    iv: Buffer.from(iv).toString('base64'),
+    data: Buffer.from(new Uint8Array(data)).toString('base64'),
+  };
+}
+
 function assertPrivate(api) {
   const serialized = JSON.stringify(api.writes);
   for (const value of [legacy.jobs[0].message, legacy.jobs[0].url, legacy.history[0].preview]) {
@@ -71,7 +92,7 @@ function assertPrivate(api) {
   }
 }
 
-const deviceStatus = { configured: true, mode: 'device', legacyData: false };
+const deviceStatus = { configured: true, mode: 'device', legacyData: false, dropped: [] };
 
 test('fresh status initializes automatic encryption, and writes contain no persistent plaintext', async () => {
   const { api, keys, store } = fixture();
@@ -242,5 +263,46 @@ test('a passphrase vault explains how to recover it and changes nothing', async 
   for (const action of [() => store.initialize(), () => store.status(), () => store.read(), () => store.write(emptyState())]) {
     await assert.rejects(action, /passphrase.*no longer supported/s);
   }
+  assert.deepEqual(api._local, before);
+});
+
+
+test('a job for a provider that no longer exists costs that job, not the whole queue', async () => {
+  const { api, keys, store } = fixture();
+  await store.initialize();
+  const key = await keys.get();
+  // Shaped exactly like a job saved before a provider was removed.
+  const retired = { ...legacy.jobs[0], id: 'retired', url: 'https://grok.com/c/12345678-1234-1234-1234-123456789abc', provider: 'grok', message: 'Saved for a removed provider' };
+  const payload = { version: 1, jobs: [legacy.jobs[0], retired], history: legacy.history };
+  api._local[VAULT_KEY] = await sealPayload(payload, key);
+  const original = structuredClone(api._local[VAULT_KEY]);
+
+  const status = await store.status();
+  assert.equal(status.dropped.length, 1);
+  assert.equal(status.dropped[0].kind, 'job');
+  assert.equal(status.dropped[0].url, retired.url);
+  // Everything still usable is returned untouched.
+  const state = await store.read();
+  assert.deepEqual(state.jobs.map(job => job.id), ['job']);
+  assert.deepEqual(state.history, legacy.history);
+  // The unreadable original is preserved rather than destroyed.
+  assert.deepEqual(api._local[BACKUP_KEY], original);
+  // Writing the repaired state keeps working, and the backup is not overwritten.
+  await store.write(state);
+  assert.deepEqual(await store.read(), state);
+  assert.deepEqual(api._local[BACKUP_KEY], original);
+});
+
+test('a damaged record is still refused rather than repaired', async () => {
+  const { api, store } = fixture();
+  await store.initialize();
+  await store.write(legacy);
+  api._local[VAULT_KEY].data = flip(api._local[VAULT_KEY].data);
+  const before = structuredClone(api._local);
+  for (const action of [() => store.status(), () => store.read(), () => store.write(emptyState())]) {
+    await assert.rejects(action, /damaged|unavailable/);
+  }
+  // Repair must not be reachable for ciphertext problems, and nothing is stashed.
+  assert.equal(api._local[BACKUP_KEY], undefined);
   assert.deepEqual(api._local, before);
 });

@@ -104,6 +104,40 @@ export function validateState(value) {
   return settings === undefined ? { version: VERSION, jobs, history } : { version: VERSION, jobs, history, settings };
 }
 
+// validateState must stay all-or-nothing: the vault compares whole states to
+// prove an encrypted copy matches its source, and silently dropping entries
+// would let those comparisons pass when they should not. Repair is therefore a
+// separate, explicit step. It keeps everything still usable and reports what it
+// set aside, so one job saved for a provider that no longer exists costs that
+// job rather than the entire queue.
+export function repairState(value) {
+  if (!value || value.version !== VERSION || !Array.isArray(value.jobs) || !Array.isArray(value.history)) {
+    throw new Error('Prompt Later data is unreadable or from an unsupported version.');
+  }
+  const jobIds = new Set();
+  const runIds = new Set();
+  const jobs = [];
+  const history = [];
+  const dropped = [];
+  for (const job of value.jobs) {
+    try {
+      jobs.push(validateJob(job, jobIds));
+    } catch (error) {
+      dropped.push({ kind: 'job', url: typeof job?.url === 'string' ? job.url : '', preview: typeof job?.message === 'string' ? job.message.slice(0, 160) : '', detail: error.message });
+    }
+  }
+  for (const run of value.history) {
+    try {
+      history.push(validateRun(run, runIds));
+    } catch (error) {
+      dropped.push({ kind: 'run', url: typeof run?.url === 'string' ? run.url : '', preview: typeof run?.preview === 'string' ? run.preview : '', detail: error.message });
+    }
+  }
+  // Anything left must satisfy the strict validator, including its cross-entry
+  // rules, or the repair has not actually produced usable data.
+  return { state: validateState({ version: VERSION, jobs, history, ...(value.settings === undefined ? {} : { settings: value.settings }) }), dropped };
+}
+
 export function pruneHistory(state) {
   const finals = state.history.filter(run => FINAL_RUNS.has(run.status));
   if (finals.length <= 200) return;
