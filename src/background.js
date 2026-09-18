@@ -115,6 +115,9 @@ if (api) {
       if (message.action === 'DELETE_JOB') {
         return reply(sendResponse, await scheduler.deleteJob(payload.id));
       }
+      if (message.action === 'CLEAR_ACTIVITY') {
+        return reply(sendResponse, await scheduler.clearActivity());
+      }
       if (message.action === 'UPDATE_SETTINGS') {
         return reply(sendResponse, await scheduler.updateSettings(payload));
       }

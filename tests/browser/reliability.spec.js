@@ -358,6 +358,15 @@ test('R11 real MV3 alarm delivers after extension UI closes and deletion preserv
     await expect(dashboard.locator('#job-list')).not.toContainText(message);
     await dashboard.locator('[data-tab="activity"]').click();
     await expect(dashboard.locator('#activity-list')).toContainText('Sent');
+    await expect(dashboard.locator('#clear-activity')).toBeVisible();
+    dashboard.once('dialog', dialog => dialog.accept());
+    await dashboard.locator('#clear-activity').click();
+    await expect(dashboard.locator('#activity-status')).toContainText('Activity cleared.');
+    await expect(dashboard.locator('#activity-list')).toContainText('No activity yet.');
+    await expect(dashboard.locator('#clear-activity')).toBeHidden();
+    await dashboard.reload();
+    await dashboard.locator('[data-tab="activity"]').click();
+    await expect(dashboard.locator('#activity-list')).toContainText('No activity yet.');
     await dashboard.locator('[data-tab="send"]').click();
     await dashboard.locator('#url').fill('https://chatgpt.com/c/second');
     await dashboard.locator('#when').selectOption('1m');

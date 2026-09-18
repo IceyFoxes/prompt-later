@@ -1,7 +1,6 @@
 import { parseTarget } from './targets.js';
 import { nextOccurrence, validateSchedule } from './schedules.js';
 import { providerLabel } from './providers.js';
-import { REASONS } from './outcomes.js';
 
 const extension = typeof chrome !== 'undefined' && Boolean(chrome.runtime?.sendMessage);
 const $ = id => document.getElementById(id);
@@ -9,6 +8,7 @@ const form = $('job-form');
 const params = new URLSearchParams(location.search);
 const requestedTab = params.get('tab');
 const JOB_DISPLAY_LIMIT = 4;
+const FINAL_RUN_STATUSES = new Set(['sent', 'skipped', 'blocked', 'uncertain']);
 const state = {
   data: { jobs: [], history: [] },
   tab: ['send', 'recurring', 'activity'].includes(requestedTab) ? requestedTab : 'send',
@@ -26,6 +26,7 @@ const state = {
   expandedJobs: { send: false, recurring: false },
   popupQueueExpanded: false,
   deliveryPending: false,
+  activityPending: false,
 };
 
 function send(action, payload = {}) {
@@ -282,7 +283,7 @@ function renderTabs() {
 
 function clearForm() {
   state.editing = null;
-  clearCheckDetails();
+  resetCheckButton();
   form.reset();
   $('timezone').value = timezone();
   $('when').value = '5h';
@@ -301,6 +302,7 @@ function clearForm() {
 
 function fillJob(job) {
   state.editing = job.id;
+  resetCheckButton();
   $('url').value = job.url;
   $('message').value = job.message;
   updateMessageCount();
@@ -473,6 +475,10 @@ function renderJobs() {
     }
   }
   const activity = $('activity-list');
+  const clearActivityButton = $('clear-activity');
+  const finalizedActivity = state.data.history.filter(run => FINAL_RUN_STATUSES.has(run.status));
+  clearActivityButton.hidden = finalizedActivity.length === 0;
+  clearActivityButton.disabled = state.activityPending;
   activity.replaceChildren();
   if (!state.data.history.length) {
     const empty = document.createElement('div');
@@ -491,10 +497,41 @@ function toggleJobList() {
   if (!state.expandedJobs[state.tab]) document.querySelector('.list-heading').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
+function settlePopupLayout() {
+  if (!state.popup) return;
+  requestAnimationFrame(() => window.scrollTo(0, 0));
+}
+
 function togglePopupQueue() {
   if (!state.popup || state.tab === 'activity') return;
   state.popupQueueExpanded = !state.popupQueueExpanded;
+  if (!state.popupQueueExpanded) state.expandedJobs[state.tab] = false;
   renderJobs();
+  settlePopupLayout();
+}
+
+function activityStatus(value, error = false) {
+  text($('activity-status'), value);
+  $('activity-status').className = `status ${error ? 'error' : 'success'}`;
+}
+
+async function clearActivity() {
+  if (state.activityPending || !isUnlocked() || !state.data.history.some(run => FINAL_RUN_STATUSES.has(run.status))) return;
+  if (!confirm('Clear activity history?')) return;
+  state.activityPending = true;
+  renderJobs();
+  activityStatus('Clearing…');
+  try {
+    const result = await send('CLEAR_ACTIVITY');
+    if (!result?.ok) throw new Error(result?.error || 'Activity could not be cleared.');
+    await load();
+    activityStatus('Activity cleared.');
+  } catch (error) {
+    activityStatus(error?.message || 'Activity could not be cleared.', true);
+  } finally {
+    state.activityPending = false;
+    renderJobs();
+  }
 }
 
 function clearSchedulerView() {
@@ -580,7 +617,7 @@ function showCurrentTabDialog() {
   if (typeof dialog.showModal === 'function') {
     if (!dialog.open) dialog.showModal();
   } else {
-    alert('Open an existing conversation on a supported AI provider first. A fresh homepage or new-chat screen does not have a conversation URL yet.');
+    alert('Start or open a conversation so it has its own conversation URL, then try again.');
   }
 }
 
@@ -602,10 +639,12 @@ async function currentTab(blocking = false, reportInvalid = false) {
   state.sourceTabId = result.data.id;
   try {
     const target = parseTarget(result.data.url);
+    resetCheckButton();
     $('url').value = target.url;
     showTarget(target);
     await selectAccessTarget(target, blocking);
   } catch {
+    resetCheckButton();
     $('url').value = '';
     showTarget();
     clearAccessTarget();
@@ -655,62 +694,10 @@ async function syncUrlAccess() {
   }
 }
 
-function clearCheckDetails() {
-  const list = $('check-details');
-  list.replaceChildren();
-  list.hidden = true;
-}
-
-// The page check already knew all of this and only ever showed one sentence.
-// Reporting each part is what makes a provider whose layout changed diagnosable
-// instead of silently failing at delivery time.
-function checkRows(data) {
-  const rows = [];
-  rows.push(data.composer
-    ? { state: 'ok', text: 'Message box found.' }
-    : { state: 'bad', text: 'Message box not found. This conversation may have changed, or it is not fully loaded.' });
-  // Most providers only render a send button once the box has text, so its
-  // absence beside an empty box is expected rather than a fault.
-  if (data.send) rows.push({ state: 'ok', text: 'Send button found.' });
-  else if (data.draft) rows.push({ state: 'bad', text: 'Send button not found even though the box has text. This conversation may have changed.' });
-  else rows.push({ state: 'info', text: 'Send button appears once the box has text, so it cannot be checked yet.' });
-  rows.push(data.users > 0
-    ? { state: 'ok', text: `Past messages recognised (${data.users}).` }
-    : { state: 'info', text: 'No past messages recognised. Normal in an empty conversation; otherwise Prompt Later may not detect when a message arrives.' });
-  if (data.draft) rows.push({ state: 'warn', text: 'The box already has text, which is left untouched.' });
-  if (data.busy) rows.push({ state: 'warn', text: 'The provider is still replying.' });
-  if (data.attachments) rows.push({ state: 'warn', text: 'An attachment is still pending.' });
-  if (data.error) rows.push({ state: 'warn', text: data.error });
-  return rows;
-}
-
-const UNREACHABLE = {
-  [REASONS.COMPOSER_MISSING]: 'Message box not found. This conversation may have changed, or it is not fully loaded.',
-  [REASONS.COMPOSER_NOT_READY]: 'The message box did not appear in time. Open the conversation and try again.',
-  [REASONS.AMBIGUOUS_CONTROLS]: 'More than one message box or send button matched, so Prompt Later will not guess.',
-  [REASONS.TARGET_MISMATCH]: 'That tab is showing a different conversation.',
-};
-
-function unreachableRows(data) {
-  const text = UNREACHABLE[data?.reason];
-  return text ? [{ state: 'bad', text }] : [];
-}
-
-function renderCheckDetails(data) {
-  const list = $('check-details');
-  list.replaceChildren();
-  const rows = data?.composer === undefined ? unreachableRows(data) : checkRows(data);
-  if (!rows.length) {
-    list.hidden = true;
-    return;
-  }
-  for (const row of rows) {
-    const item = document.createElement('li');
-    item.className = `check-row check-${row.state}`;
-    item.textContent = row.text;
-    list.append(item);
-  }
-  list.hidden = false;
+function resetCheckButton() {
+  const button = $('check');
+  button.classList.remove('check-success');
+  button.textContent = 'Check page';
 }
 
 async function checkPage() {
@@ -718,16 +705,20 @@ async function checkPage() {
   try {
     const target = parseTarget($('url').value);
     setPending(true);
-    clearCheckDetails();
+    resetCheckButton();
     if (!(await requireAccess(target))) return;
     const result = await send('CHECK_TARGET', { url: target.url });
     if (!result.ok) throw new Error(result.error);
-    const blocked = result.data?.status === 'blocked';
-    setStatus(`${result.data?.detail || 'Page checked.'} This action does not send.`, blocked);
-    renderCheckDetails(result.data);
+    if (result.data?.status === 'blocked') {
+      setStatus(result.data.detail || 'Page is not ready.', true);
+    } else {
+      setStatus('');
+      $('check').classList.add('check-success');
+      $('check').textContent = '✓ Page ready';
+    }
   } catch (error) {
+    resetCheckButton();
     setStatus(error.message, true);
-    clearCheckDetails();
   } finally {
     setPending(false);
   }
@@ -787,10 +778,17 @@ function switchTab(event) {
   const next = event.currentTarget.dataset.tab;
   if (next !== state.tab && state.editing) clearForm();
   state.tab = next;
+  if (state.popup) {
+    state.popupQueueExpanded = false;
+    state.expandedJobs.send = false;
+    state.expandedJobs.recurring = false;
+  }
   setStatus('');
+  activityStatus('');
   renderTabs();
   renderJobs();
   previewSchedule();
+  settlePopupLayout();
 }
 
 function navigateTabs(event) {
@@ -819,6 +817,7 @@ $('current-tab-dialog').addEventListener('click', event => {
   if (event.target === $('current-tab-dialog')) $('current-tab-dialog').close();
 });
 $('check').addEventListener('click', checkPage);
+$('clear-activity').addEventListener('click', clearActivity);
 $('cancel-edit').addEventListener('click', clearForm);
 $('job-list-toggle').addEventListener('click', toggleJobList);
 $('popup-queue-toggle').addEventListener('click', togglePopupQueue);
@@ -829,7 +828,7 @@ $('interval-hours').addEventListener('input', previewSchedule);
 $('recurring-time').addEventListener('input', previewSchedule);
 $('cron').addEventListener('input', previewSchedule);
 $('timezone').addEventListener('input', previewSchedule);
-$('url').addEventListener('input', () => { clearCheckDetails(); updateTargetPreview(); });
+$('url').addEventListener('input', () => { resetCheckButton(); updateTargetPreview(); });
 $('url').addEventListener('change', syncUrlAccess);
 $('message').addEventListener('input', updateMessageCount);
 if (extension) {
@@ -844,7 +843,7 @@ if (extension) {
   $('save').disabled = true;
   $('check').disabled = true;
 }
-if (state.popup) document.body.classList.add('popup');
+if (state.popup) { document.body.classList.add('popup'); document.documentElement.classList.add('popup-root'); }
 $('dashboard-link').hidden = !state.popup;
 populateTimezones();
 clearForm();

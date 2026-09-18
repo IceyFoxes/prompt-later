@@ -178,6 +178,16 @@ export class Scheduler {
     });
   }
 
+  async clearActivity() {
+    return this._mutate(async draft => {
+      const before = draft.history.length;
+      // Active rows are part of an in-flight delivery and must remain available
+      // to finish or recover safely. Everything finalized is user-clearable.
+      draft.history = draft.history.filter(run => ACTIVE_RUNS.has(run.status));
+      return { removed: before - draft.history.length };
+    });
+  }
+
   async deleteJob(id) {
     return this._mutate(async draft => {
       const index = draft.jobs.findIndex(item => item.id === id);

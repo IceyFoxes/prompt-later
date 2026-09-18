@@ -338,3 +338,36 @@ test('unknown state version remains unchanged', async () => {
   await assert.rejects(() => scheduler.initialize());
   assert.deepEqual(store.data, bad);
 });
+
+
+test('clearing activity removes finalized runs and preserves active delivery state', async () => {
+  const active = {
+    id: 'active-run', jobId: 'job-1', url: target, provider: 'chatgpt', preview: 'Hello',
+    dueAt: 900, startedAt: 900, finishedAt: null, status: 'checking', detail: '',
+  };
+  const sent = { ...active, id: 'sent-run', finishedAt: 950, status: 'sent' };
+  const blocked = { ...active, id: 'blocked-run', finishedAt: 960, status: 'blocked' };
+  const running = once(900, { status: 'running', runId: 'active-run' });
+  const environment = make({ ...emptyState(), jobs: [running], history: [sent, active, blocked] });
+  // Clear through a scheduler already considered active so initialization does
+  // not recover the synthetic in-flight run first.
+  environment.scheduler.initialized = true;
+  const result = await environment.scheduler.clearActivity();
+  assert.deepEqual(result, { removed: 2 });
+  assert.deepEqual(environment.store.data.history, [active]);
+  assert.equal(environment.store.data.jobs[0].runId, 'active-run');
+});
+
+test('clearing activity preserves jobs and settings and stays cleared', async () => {
+  const sent = {
+    id: 'sent-run', jobId: 'job-1', url: target, provider: 'chatgpt', preview: 'Hello',
+    dueAt: 1, startedAt: 1, finishedAt: 2, status: 'sent', detail: '',
+  };
+  const state = { ...emptyState(), jobs: [once(5000)], history: [sent], settings: { draftPolicy: 'stop' } };
+  const environment = make(state);
+  await environment.scheduler.initialize();
+  await environment.scheduler.clearActivity();
+  assert.deepEqual(environment.store.data.history, []);
+  assert.equal(environment.store.data.jobs[0].id, 'job-1');
+  assert.deepEqual(environment.store.data.settings, { draftPolicy: 'stop' });
+});
