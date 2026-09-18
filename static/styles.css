@@ -139,6 +139,7 @@ button:focus-visible,a:focus-visible,summary:focus-visible { outline:3px solid r
 .card .job-status-needs-attention { border-color:#ffd8cf; background:var(--danger-soft); color:var(--danger); }
 .card .job-status-paused,.card .job-status-completed { border-color:#e3e2e8; background:#f4f4f7; color:#6b6b78; }
 .card .job-status-running { border-color:#ded8ff; background:var(--accent-soft); color:#5141c8; }
+.card .job-status-waiting { border-color:#ffe6bd; background:#fff7e8; color:#8a5a00; }
 .danger { color:var(--danger); }
 .secondary.danger:hover:not(:disabled) { border-color:#f0bbb4; background:var(--danger-soft); color:var(--danger); }
 .empty { border:1px dashed #d7d4e0; border-radius:12px; background:#fbfbfd; color:var(--muted); padding:24px 16px; text-align:center; font-size:12px; }

@@ -166,10 +166,10 @@ test('R5 missing, ambiguous, modal, read-only, and missing-send fixtures fail cl
   test.setTimeout(120000);
   const cases = [
     { fixture: { missingEditor: true }, detail: 'Composer was not found' },
-    { fixture: { editors: 2 }, detail: 'Composer controls are ambiguous' },
+    { fixture: { editors: 2 }, detail: 'Composer controls are ambiguous', permanent: true },
     { fixture: { readOnly: true }, detail: 'Composer was not found' },
     { fixture: { missingEditor: true, modalEditor: true }, detail: 'Composer was not found' },
-    { fixture: { sends: 2 }, detail: 'Send controls are ambiguous' },
+    { fixture: { sends: 2 }, detail: 'Send controls are ambiguous', permanent: true },
     { fixture: { missingSend: true }, detail: 'explicit send control was not found' },
   ];
   for (const [index, item] of cases.entries()) {
@@ -180,7 +180,7 @@ test('R5 missing, ambiguous, modal, read-only, and missing-send fixtures fail cl
       await provider.goto(target);
       await dueState(page);
       await tickFromPage(page);
-      await expect(page.locator('#job-list')).toContainText('Needs attention');
+      await expect(page.locator('#job-list')).toContainText(item.permanent ? 'Needs attention' : 'Waiting to retry');
       await expect(page.locator('#job-list .meta')).toContainText(item.detail);
       await expect(provider.locator('#messages')).toBeEmpty();
       await provider.close();
@@ -195,7 +195,7 @@ test('R6 URL and attachment races block without clicking and retain the draft', 
     await provider.goto('https://chatgpt.com/c/race');
     await dueState(page);
     await tickFromPage(page);
-    await expect(page.locator('#job-list')).toContainText('Needs attention');
+    await expect(page.locator('#job-list')).toContainText('Waiting to retry');
     await expect(provider.locator('#messages')).toBeEmpty();
     await expect(provider.locator('#prompt-textarea')).toHaveValue('Race prompt');
     await provider.close();
@@ -206,7 +206,7 @@ test('R6 URL and attachment races block without clicking and retain the draft', 
     await provider.goto('https://chatgpt.com/c/attachment');
     await dueState(page);
     await tickFromPage(page);
-    await expect(page.locator('#job-list')).toContainText('Needs attention');
+    await expect(page.locator('#job-list')).toContainText('Waiting to retry');
     await expect(provider.locator('#messages')).toBeEmpty();
     await expect(provider.locator('#prompt-textarea')).toHaveValue('Attachment prompt');
     await provider.close();
@@ -244,7 +244,7 @@ test('R8 protects existing textarea and contenteditable drafts', async () => {
       await provider.locator(item.selector).fill('Existing user draft');
       await dueState(page);
       await tickFromPage(page);
-      await expect(page.locator('#job-list')).toContainText('Needs attention');
+      await expect(page.locator('#job-list')).toContainText('Waiting to retry');
       if (item.kind === 'textarea') await expect(provider.locator(item.selector)).toHaveValue('Existing user draft');
       else await expect(provider.locator(item.selector)).toHaveText('Existing user draft');
       await provider.close();

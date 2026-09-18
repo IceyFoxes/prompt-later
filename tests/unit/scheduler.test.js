@@ -78,12 +78,103 @@ test('concurrent ticks deliver one run', async () => {
   assert.equal(calls, 1);
 });
 
-test('failure before dispatch retains job for attention', async () => {
-  const environment = make(undefined, async () => ({ outcome: 'blocked', detail: 'draft exists' }));
+test('a temporary failure waits and retries instead of retiring the job', async () => {
+  let calls = 0;
+  const environment = make(undefined, async () => {
+    calls += 1;
+    return { outcome: 'blocked', detail: 'draft exists', reason: 'draft' };
+  });
+  await environment.scheduler.initialize();
+  await environment.scheduler.tick();
+  const job = environment.store.data.jobs[0];
+  assert.equal(job.status, 'scheduled');
+  assert.equal(job.enabled, true);
+  assert.equal(job.attempts, 1);
+  assert.equal(job.nextRunAt, 1000 + 5 * 60 * 1000);
+  assert.equal(job.retryUntil, 900 + 2 * 60 * 60 * 1000);
+  assert.equal(environment.store.data.history[0].status, 'blocked');
+  // The waiting attempt must not be picked up again until its time arrives.
+  await environment.scheduler.tick();
+  assert.equal(calls, 1);
+});
+
+test('an unclassified failure before dispatch is treated as temporary', async () => {
+  const environment = make(undefined, async () => ({ outcome: 'blocked', detail: 'something odd' }));
+  await environment.scheduler.initialize();
+  await environment.scheduler.tick();
+  assert.equal(environment.store.data.jobs[0].status, 'scheduled');
+  assert.equal(environment.store.data.jobs[0].attempts, 1);
+});
+
+test('a waiting job delivers on its next attempt once the page is ready', async () => {
+  let current = 1000;
+  let calls = 0;
+  const environment = make(undefined, async (job, run, mark) => {
+    calls += 1;
+    if (calls === 1) return { outcome: 'blocked', detail: 'draft exists', reason: 'draft' };
+    await mark();
+    return { outcome: 'sent', detail: 'ack' };
+  }, () => current);
+  await environment.scheduler.initialize();
+  await environment.scheduler.tick();
+  assert.equal(environment.store.data.jobs[0].nextRunAt, 1000 + 5 * 60 * 1000);
+  current = 1000 + 5 * 60 * 1000;
+  await environment.scheduler.tick();
+  assert.equal(calls, 2);
+  const job = environment.store.data.jobs[0];
+  assert.equal(job.status, 'completed');
+  assert.equal(job.attempts, 0);
+  assert.equal(job.retryUntil, null);
+  const history = environment.store.data.history;
+  assert.equal(history.length, 2);
+  assert.deepEqual(history.map(run => run.status), ['blocked', 'sent']);
+});
+
+test('a permanent failure asks for attention without retrying', async () => {
+  const environment = make(undefined, async () => ({ outcome: 'blocked', detail: 'no access', reason: 'permission-missing' }));
+  await environment.scheduler.initialize();
+  await environment.scheduler.tick();
+  const job = environment.store.data.jobs[0];
+  assert.equal(job.status, 'needs-attention');
+  assert.equal(job.enabled, false);
+  assert.equal(job.attempts, 0);
+  assert.equal(job.retryUntil, null);
+});
+
+test('retries stop after the last delay and ask for attention', async () => {
+  const environment = make(
+    { ...emptyState(), jobs: [once(900, { attempts: 3, retryUntil: 900 + 2 * 60 * 60 * 1000 })] },
+    async () => ({ outcome: 'blocked', detail: 'draft exists', reason: 'draft' }),
+  );
+  await environment.scheduler.initialize();
+  await environment.scheduler.tick();
+  const job = environment.store.data.jobs[0];
+  assert.equal(job.status, 'needs-attention');
+  assert.equal(job.attempts, 0);
+  assert.equal(job.retryUntil, null);
+});
+
+test('a retry is abandoned once it would fall outside the window', async () => {
+  const environment = make(
+    { ...emptyState(), jobs: [once(900, { attempts: 2, retryUntil: 1000 + 10 * 60 * 1000 })] },
+    async () => ({ outcome: 'blocked', detail: 'still busy', reason: 'busy' }),
+  );
   await environment.scheduler.initialize();
   await environment.scheduler.tick();
   assert.equal(environment.store.data.jobs[0].status, 'needs-attention');
-  assert.equal(environment.store.data.history[0].status, 'blocked');
+});
+
+test('a successful retry clears the retry bookkeeping', async () => {
+  const environment = make(
+    { ...emptyState(), jobs: [once(900, { attempts: 2, retryUntil: 900 + 2 * 60 * 60 * 1000 })] },
+    async (job, run, mark) => { await mark(); return { outcome: 'sent', detail: 'ack' }; },
+  );
+  await environment.scheduler.initialize();
+  await environment.scheduler.tick();
+  const job = environment.store.data.jobs[0];
+  assert.equal(job.status, 'completed');
+  assert.equal(job.attempts, 0);
+  assert.equal(job.retryUntil, null);
 });
 
 test('failure after dispatch is uncertain and is not retried', async () => {
