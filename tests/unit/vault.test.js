@@ -5,9 +5,8 @@ import { emptyState } from '../../src/store.js';
 
 globalThis.crypto ??= webcrypto;
 const { createVaultStore, STAGED_KEY } = await import('../../src/vault.js');
-const { VAULT_KEY, SESSION_KEY, VaultLockedError, decryptDeviceState, deriveVaultKey, encryptState, newVaultSalt } = await import('../../src/vault-crypto.js');
+const { VAULT_KEY, decryptDeviceState, encryptDeviceState } = await import('../../src/vault-crypto.js');
 const LEGACY_KEY = 'prompt-later.v1';
-const passphrase = 'Synthetic vault passphrase';
 const legacy = {
   version: 1,
   jobs: [{ id: 'job', url: 'https://chatgpt.com/c/vaultfixture', provider: 'chatgpt', message: 'Secret fixture', schedule: { type: 'once', at: 5000, timeZone: 'UTC' }, missedPolicy: 'skip', createdAt: 1, updatedAt: 1, enabled: true, status: 'scheduled', nextRunAt: 5000, runId: null, lastOutcome: null, lastDetail: '' }],
@@ -59,13 +58,6 @@ function fixture(initial = {}) {
   return { api, keys, store: createVaultStore(api, keys) };
 }
 
-async function oldVault(state = legacy) {
-  const salt = newVaultSalt();
-  const key = await deriveVaultKey(passphrase, salt);
-  const envelope = await encryptState(state, key, salt);
-  return { ...fixture({ [VAULT_KEY]: envelope }), envelope, key };
-}
-
 function flip(value) {
   const bytes = Buffer.from(value, 'base64');
   bytes[0] ^= 1;
@@ -74,15 +66,14 @@ function flip(value) {
 
 function assertPrivate(api) {
   const serialized = JSON.stringify(api.writes);
-  for (const value of [legacy.jobs[0].message, legacy.jobs[0].url, legacy.history[0].preview, passphrase, api._session[SESSION_KEY]?.key].filter(Boolean)) {
+  for (const value of [legacy.jobs[0].message, legacy.jobs[0].url, legacy.history[0].preview]) {
     assert.equal(serialized.includes(value), false, value);
   }
 }
 
-const deviceStatus = { configured: true, mode: 'device', locked: false, legacyData: false };
-const lockedStatus = { configured: true, mode: 'passphrase', locked: true, legacyData: false };
+const deviceStatus = { configured: true, mode: 'device', legacyData: false };
 
-test('fresh status initializes automatic encryption, and writes contain no persistent plaintext or raw key', async () => {
+test('fresh status initializes automatic encryption, and writes contain no persistent plaintext', async () => {
   const { api, keys, store } = fixture();
   assert.deepEqual(await store.status(), deviceStatus);
   assert.deepEqual(await store.read(), emptyState());
@@ -90,6 +81,7 @@ test('fresh status initializes automatic encryption, and writes contain no persi
   assert.deepEqual(await store.read(), legacy);
   assert.equal((await keys.get()).extractable, false);
   assert.deepEqual(Object.keys(api._local), [VAULT_KEY]);
+  // Nothing is kept in session storage now that there is no derived key to cache.
   assert.deepEqual(api._session, {});
   assertPrivate(api);
 });
@@ -117,50 +109,6 @@ test('legacy plaintext is removed only after independently authenticated device 
   assertPrivate(api);
 });
 
-test('existing v1 vaults initialize locked, never touch device keys, and keep their exact envelope', async () => {
-  const { api, envelope } = await oldVault();
-  const unavailable = { get() { throw new Error('Device keys must not be used'); }, getOrCreate() { throw new Error('Device keys must not be used'); } };
-  const store = createVaultStore(api, unavailable);
-  assert.deepEqual(await store.initialize(), lockedStatus);
-  assert.deepEqual(api._local, { [VAULT_KEY]: envelope });
-  await assert.rejects(() => store.read(), VaultLockedError);
-  await assert.rejects(() => store.write(emptyState()), VaultLockedError);
-  await store.unlock(passphrase);
-  assert.deepEqual(await store.read(), legacy);
-  assert.deepEqual(api._local, { [VAULT_KEY]: envelope });
-  assert.deepEqual(await createVaultStore(api).read(), legacy);
-});
-
-test('enable, session loss, wrong unlock, correct unlock, and disable preserve exact data', async () => {
-  const { api, keys, store } = fixture({ [LEGACY_KEY]: legacy });
-  await store.initialize();
-  await store.enablePassphrase(passphrase);
-  assert.equal(api._local[VAULT_KEY].version, 1);
-  assert.deepEqual(await createVaultStore(api, keys).read(), legacy);
-  await api.storage.session.remove(SESSION_KEY);
-  const before = structuredClone(api._local);
-  assert.deepEqual(await store.status(), lockedStatus);
-  await assert.rejects(() => store.unlock('Incorrect synthetic passphrase'), /incorrect|damaged/);
-  await assert.rejects(() => store.disablePassphrase(), VaultLockedError);
-  assert.deepEqual(api._local, before);
-  assert.deepEqual(api._session, {});
-  await store.unlock(passphrase);
-  assert.deepEqual(await store.disablePassphrase(), deviceStatus);
-  assert.deepEqual(await createVaultStore(api, keys).read(), legacy);
-  assert.deepEqual(api._session, {});
-  assertPrivate(api);
-});
-
-test('concurrent enable cannot replace a chosen passphrase and device mode cannot be unlocked', async () => {
-  const { store } = fixture();
-  await store.initialize();
-  await assert.rejects(() => store.unlock(passphrase), /automatic|device/i);
-  const results = await Promise.allSettled([store.enablePassphrase(passphrase), store.enablePassphrase('Different synthetic passphrase')]);
-  assert.deepEqual(results.map(result => result.status), ['fulfilled', 'rejected']);
-  await assert.rejects(() => store.unlock('Different synthetic passphrase'), /incorrect|damaged/);
-  await store.unlock(passphrase);
-});
-
 test('failed device key persistence preserves plaintext and creates no encrypted record', async () => {
   const { api, keys, store } = fixture({ [LEGACY_KEY]: legacy });
   keys.getOrCreate = async () => { throw new Error('Synthetic key failure'); };
@@ -169,31 +117,11 @@ test('failed device key persistence preserves plaintext and creates no encrypted
   assert.deepEqual(api._session, {});
 });
 
-test('failed encrypted staging persistence preserves legacy jobs and history', async () => {
+test('failed encrypted persistence preserves legacy jobs and history', async () => {
   const { api, store } = fixture({ [LEGACY_KEY]: legacy });
   api.storage.local.set = async () => { throw new Error('Synthetic persistence failure'); };
   await assert.rejects(() => store.initialize(), /persistence failure/);
   assert.deepEqual(api._local, { [LEGACY_KEY]: legacy });
-});
-
-test('failed staged readback authentication cannot overwrite active or legacy copies and can be retried', async () => {
-  const { api, store } = fixture({ [LEGACY_KEY]: legacy });
-  const set = api.storage.local.set;
-  let saved;
-  api.storage.local.set = async update => {
-    await set(update);
-    if (update[STAGED_KEY]) {
-      saved = structuredClone(update[STAGED_KEY]);
-      api._local[STAGED_KEY].envelope.data = flip(saved.envelope.data);
-    }
-  };
-  await assert.rejects(() => store.initialize());
-  assert.deepEqual(api._local[LEGACY_KEY], legacy);
-  assert.equal(api._local[VAULT_KEY], undefined);
-  api.storage.local.set = set;
-  api._local[STAGED_KEY] = saved;
-  assert.deepEqual(await store.initialize(), deviceStatus);
-  assert.deepEqual(await store.read(), legacy);
 });
 
 test('legacy changes during encryption are not silently discarded', async () => {
@@ -226,88 +154,14 @@ test('interrupted legacy cleanup blocks writes and retries without re-encrypting
   assert.deepEqual(await store.read(), legacy);
 });
 
-for (const direction of ['enable', 'disable']) {
-  test(`interrupted ${direction} before final commit requires the right passphrase after restart`, async () => {
-    const { api, keys, store } = fixture({ [LEGACY_KEY]: legacy });
-    await store.initialize();
-    if (direction === 'disable') await store.enablePassphrase(passphrase);
-    const original = structuredClone(api._local[VAULT_KEY]);
-    const set = api.storage.local.set;
-    api.storage.local.set = async update => {
-      if (update[VAULT_KEY]) throw new Error('Synthetic commit failure');
-      await set(update);
-    };
-    await assert.rejects(() => direction === 'enable' ? store.enablePassphrase(passphrase) : store.disablePassphrase(), /commit failure/);
-    assert.deepEqual(api._local[VAULT_KEY], original);
-    assert.ok(api._local[STAGED_KEY]);
-    api.storage.local.set = set;
-    await api.storage.session.remove(SESSION_KEY);
-    const restarted = createVaultStore(api, keys);
-    const before = structuredClone(api._local);
-    assert.deepEqual(await restarted.initialize(), lockedStatus);
-    await assert.rejects(() => restarted.unlock('Incorrect synthetic passphrase'), /incorrect|damaged/);
-    assert.deepEqual(api._local, before);
-    await restarted.unlock(passphrase);
-    assert.deepEqual(await restarted.read(), legacy);
-    assert.equal((await restarted.status()).mode, direction === 'enable' ? 'passphrase' : 'device');
-    assert.equal(api._local[STAGED_KEY], undefined);
-    assertPrivate(api);
-  });
-}
-
-test('authenticated staged copy recovers corrupted final ciphertext after an interrupted enable', async () => {
-  const { api, store } = fixture({ [LEGACY_KEY]: legacy });
-  await store.initialize();
-  const set = api.storage.local.set;
-  api.storage.local.set = async update => {
-    await set(update);
-    if (update[VAULT_KEY]) api._local[VAULT_KEY].data = flip(update[VAULT_KEY].data);
-  };
-  await assert.rejects(() => store.enablePassphrase(passphrase));
-  assert.ok(api._local[STAGED_KEY]);
-  api.storage.local.set = set;
-  await store.unlock(passphrase);
-  assert.deepEqual(await store.read(), legacy);
-  assert.equal(api._local[STAGED_KEY], undefined);
-});
-
-test('failed staged cleanup keeps a recoverable passphrase copy and only completes after retry', async () => {
-  const { api, store } = fixture();
-  await store.initialize();
-  await store.write(legacy);
-  const remove = api.storage.local.remove;
-  api.storage.local.remove = async key => {
-    if (key === STAGED_KEY) throw new Error('Synthetic stage cleanup failure');
-    await remove(key);
-  };
-  await assert.rejects(() => store.enablePassphrase(passphrase), /stage cleanup failure/);
-  assert.ok(api._local[STAGED_KEY]);
-  assert.deepEqual(api._session, {});
-  api.storage.local.remove = remove;
-  await store.unlock(passphrase);
-  assert.deepEqual(await store.read(), legacy);
-});
-
-test('session persistence failure leaves a vault recoverable with the same passphrase', async () => {
-  const { api, store } = fixture({ [LEGACY_KEY]: legacy });
-  await store.initialize();
-  const set = api.storage.session.set;
-  api.storage.session.set = async () => { throw new Error('Synthetic session failure'); };
-  await assert.rejects(() => store.enablePassphrase(passphrase), /session failure/);
-  assert.deepEqual(await store.status(), lockedStatus);
-  api.storage.session.set = set;
-  await store.unlock(passphrase);
-  assert.deepEqual(await store.read(), legacy);
-});
-
-test('missing or wrong device key blocks status, reads, writes and transitions without regenerating', async () => {
+test('missing or wrong device key blocks status, reads and writes without regenerating', async () => {
   const { api, keys, store } = fixture({ [LEGACY_KEY]: legacy });
   await store.initialize();
   const before = structuredClone(api._local);
   const original = await keys.get();
   for (const key of [null, {}, await webcrypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt'])]) {
     keys.replace(key);
-    for (const action of [() => store.initialize(), () => store.status(), () => store.read(), () => store.write(emptyState()), () => store.enablePassphrase(passphrase)]) {
+    for (const action of [() => store.initialize(), () => store.status(), () => store.read(), () => store.write(emptyState())]) {
       await assert.rejects(action);
       assert.deepEqual(api._local, before);
     }
@@ -317,45 +171,18 @@ test('missing or wrong device key blocks status, reads, writes and transitions w
   assert.deepEqual(await store.read(), legacy);
 });
 
-test('conflicting legacy copies block device and passphrase writes without losing either copy', async () => {
-  for (const mode of ['device', 'passphrase']) {
-    const { api, store } = fixture({ [LEGACY_KEY]: legacy });
-    await store.initialize();
-    if (mode === 'passphrase') await store.enablePassphrase(passphrase);
-    api._local[LEGACY_KEY] = emptyState();
-    const before = structuredClone(api._local);
-    await assert.rejects(() => store.read());
-    await assert.rejects(() => store.write(emptyState()));
-    if (mode === 'passphrase') {
-      assert.equal((await store.status()).locked, true);
-      await assert.rejects(() => store.unlock(passphrase), /changed|conflict/);
-    } else await assert.rejects(() => store.status(), /changed|conflict/);
-    assert.deepEqual(api._local, before);
-  }
-});
-
-test('existing v1 legacy cleanup requires explicit unlock even with a valid session', async () => {
-  const { api, store, key, envelope } = await oldVault();
-  api._local[LEGACY_KEY] = structuredClone(legacy);
-  api._session[SESSION_KEY] = { key, salt: envelope.salt };
-  assert.deepEqual(await store.initialize(), { ...lockedStatus, legacyData: true });
-  await assert.rejects(() => store.write(emptyState()), VaultLockedError);
-  await store.unlock(passphrase);
-  assert.deepEqual(await store.read(), legacy);
-  assert.equal(api._local[LEGACY_KEY], undefined);
-});
-
-test('a syntactically valid but incorrect session key cannot report unlocked or overwrite data', async () => {
-  const { api, store, envelope } = await oldVault();
-  api._session[SESSION_KEY] = { salt: envelope.salt, key: Buffer.alloc(32, 23).toString('base64') };
+test('a conflicting legacy copy blocks reads and writes without losing either copy', async () => {
+  const { api, store } = fixture({ [LEGACY_KEY]: legacy });
+  await store.initialize();
+  api._local[LEGACY_KEY] = emptyState();
   const before = structuredClone(api._local);
-  for (const action of [() => store.status(), () => store.read(), () => store.write(emptyState()), () => store.disablePassphrase()]) await assert.rejects(action, /damaged/);
+  await assert.rejects(() => store.read());
+  await assert.rejects(() => store.write(emptyState()));
+  await assert.rejects(() => store.status(), /changed|conflict/);
   assert.deepEqual(api._local, before);
-  await store.unlock(passphrase);
-  assert.deepEqual(await store.read(), legacy);
 });
 
-test('damaged ciphertext, unsupported headers, and malformed stages are never reset', async () => {
+test('damaged ciphertext and unsupported headers are never reset', async () => {
   const { api, store } = fixture();
   await store.initialize();
   const valid = structuredClone(api._local[VAULT_KEY]);
@@ -365,25 +192,55 @@ test('damaged ciphertext, unsupported headers, and malformed stages are never re
     for (const action of [() => store.status(), () => store.initialize(), () => store.read(), () => store.write(emptyState())]) await assert.rejects(action);
     assert.deepEqual(api._local, before);
   }
-  api._local[VAULT_KEY] = valid;
-  api._local[STAGED_KEY] = { version: 9 };
-  const before = structuredClone(api._local);
-  await assert.rejects(() => store.initialize());
-  assert.deepEqual(api._local, before);
 });
 
-test('a stage with a competing active IV never overwrites the competing record', async () => {
+test('a write whose stored bytes do not read back is refused', async () => {
   const { api, store } = fixture();
   await store.initialize();
+  const original = structuredClone(api._local[VAULT_KEY]);
   const set = api.storage.local.set;
   api.storage.local.set = async update => {
-    if (update[VAULT_KEY]) throw new Error('Synthetic commit failure');
     await set(update);
+    if (update[VAULT_KEY]) api._local[VAULT_KEY].data = flip(update[VAULT_KEY].data);
   };
-  await assert.rejects(() => store.enablePassphrase(passphrase));
+  await assert.rejects(() => store.write(legacy), /did not verify/);
   api.storage.local.set = set;
-  api._local[VAULT_KEY].iv = flip(api._local[VAULT_KEY].iv);
+  // The damaged record is reported rather than trusted, and the good copy is
+  // restorable by writing again.
+  api._local[VAULT_KEY] = original;
+  await store.write(legacy);
+  assert.deepEqual(await store.read(), legacy);
+});
+
+test('a staged record left by an older version is discarded once a vault is readable', async () => {
+  const { api, keys, store } = fixture();
+  await store.initialize();
+  const key = await keys.get();
+  api._local[STAGED_KEY] = { version: 1, sourceIv: null, envelope: await encryptDeviceState(legacy, key) };
+  assert.deepEqual(await store.status(), deviceStatus);
+  assert.equal(api._local[STAGED_KEY], undefined);
+  assert.deepEqual(await store.read(), emptyState());
+});
+
+test('a passphrase vault explains how to recover it and changes nothing', async () => {
+  const passphraseEnvelope = {
+    version: 1,
+    kdf: 'PBKDF2-SHA256',
+    iterations: 600000,
+    salt: Buffer.alloc(16, 7).toString('base64'),
+    cipher: 'AES-GCM-256',
+    iv: Buffer.alloc(12, 3).toString('base64'),
+    data: Buffer.alloc(32, 5).toString('base64'),
+  };
+  const api = chromeMock({ [VAULT_KEY]: passphraseEnvelope });
+  const unavailable = {
+    get() { throw new Error('Device keys must not be used'); },
+    getOrCreate() { throw new Error('Device keys must not be used'); },
+  };
+  const store = createVaultStore(api, unavailable);
   const before = structuredClone(api._local);
-  await assert.rejects(() => store.unlock(passphrase), /changed|conflict/);
+  for (const action of [() => store.initialize(), () => store.status(), () => store.read(), () => store.write(emptyState())]) {
+    await assert.rejects(action, /passphrase.*no longer supported/s);
+  }
   assert.deepEqual(api._local, before);
 });

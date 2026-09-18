@@ -81,7 +81,7 @@ try {
   await page.locator('#privacy-settings > summary').click();
   await page.locator('#privacy-title').getByText('Automatic device protection', { exact: true }).waitFor();
   await page.locator('#privacy-settings').scrollIntoViewIfNeeded();
-  await page.screenshot({ path: path.join(images, 'vault-unlock.png') });
+  await page.screenshot({ path: path.join(images, 'privacy-settings.png') });
   const promo = await context.newPage();
   await promo.setViewportSize({ width: 440, height: 280 });
   const icon = fs.readFileSync(path.join(images, 'icon128.png')).toString('base64');

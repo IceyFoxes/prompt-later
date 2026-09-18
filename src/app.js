@@ -22,9 +22,6 @@ const state = {
   accessGeneration: 0,
   pending: false,
   vault: null,
-  vaultPending: false,
-  privacyPending: false,
-  privacyMode: null,
   loadGeneration: 0,
   expandedJobs: { send: false, recurring: false },
   popupQueueExpanded: false,
@@ -51,7 +48,7 @@ function localValue(timestamp) {
 }
 
 function isUnlocked() {
-  return state.vault?.configured === true && state.vault.locked === false;
+  return state.vault?.configured === true && state.vault.unavailable === false;
 }
 
 function accessStatus(value, error = false) {
@@ -510,18 +507,6 @@ function clearSchedulerView() {
   renderJobs();
 }
 
-function privacyStatus(value, error = false) {
-  text($('privacy-status'), value);
-  $('privacy-status').className = `status ${error ? 'error' : 'success'}`;
-}
-
-function resetPrivacyForm() {
-  $('privacy-form').hidden = true;
-  $('privacy-passphrase').value = '';
-  $('privacy-confirm').value = '';
-  privacyStatus('');
-}
-
 const DRAFT_POLICY_HINTS = {
   wait: 'The scheduled message waits and tries again after 5, 15, then 60 minutes, for up to two hours after its due time.',
   stop: 'The scheduled message is held and the queue shows it as needing attention, so you can send it yourself.',
@@ -551,120 +536,22 @@ async function changeDraftPolicy() {
 }
 
 function renderPrivacySettings() {
-  const visible = !state.popup && isUnlocked();
-  const mode = visible ? state.vault.mode : null;
-  if (mode !== state.privacyMode || !visible) resetPrivacyForm();
-  state.privacyMode = mode;
-  $('privacy-settings').hidden = !visible;
-  $('privacy-title').textContent = mode === 'device' ? 'Automatic device protection' : 'Passphrase protection is on';
-  $('privacy-description').textContent = mode === 'device'
-    ? 'Schedules are AES-256-GCM encrypted using a non-exportable key kept by this browser profile and resume automatically after restarts and updates. This is not hardware-backed protection; someone controlling the browser or profile may still access the data.'
-    : 'Browser restarts and extension updates pause schedules until you unlock in the dashboard. There is no forgotten-passphrase recovery.';
-  $('privacy-enable').hidden = mode !== 'device' || !$('privacy-form').hidden;
-  $('privacy-disable').hidden = mode !== 'passphrase';
-  for (const id of ['privacy-enable', 'privacy-disable', 'privacy-submit', 'privacy-cancel', 'privacy-passphrase', 'privacy-confirm']) {
-    $(id).disabled = !visible || state.privacyPending;
-  }
-}
-
-function showPassphraseForm() {
-  if (!isUnlocked() || state.popup || state.privacyPending || state.vault.mode !== 'device') return;
-  $('privacy-form').hidden = false;
-  privacyStatus('');
-  renderPrivacySettings();
-  $('privacy-passphrase').focus();
-}
-
-async function changeProtection(action, payload = {}) {
-  if (state.popup || state.privacyPending || !isUnlocked()) return;
-  state.privacyPending = true;
-  renderPrivacySettings();
-  privacyStatus('Updating protection…');
-  let failure = '';
-  try {
-    const result = await send(action, payload);
-    if (!result?.ok) throw new Error(result?.error || 'The protection change did not complete.');
-  } catch (error) {
-    failure = error?.message || 'The protection change did not complete.';
-  } finally {
-    state.privacyPending = false;
-  }
-  await load();
-  if (failure) {
-    if (isUnlocked()) privacyStatus(failure, true);
-    else renderVault(state.vault, failure);
-  } else if (isUnlocked()) privacyStatus('Protection updated. Saved messages and activity were preserved.');
-}
-
-async function privacySubmit(event) {
-  event.preventDefault();
-  if (state.privacyPending || state.popup || !isUnlocked()) return;
-  const passphrase = $('privacy-passphrase').value;
-  const confirmation = $('privacy-confirm').value;
-  $('privacy-passphrase').value = '';
-  $('privacy-confirm').value = '';
-  if (passphrase.length < 12 || passphrase.length > 1024 || !passphrase.trim()) {
-    privacyStatus('Use a passphrase of 12–1,024 characters.', true);
-    return;
-  }
-  if (passphrase !== confirmation) {
-    privacyStatus('Passphrases do not match.', true);
-    return;
-  }
-  await changeProtection('ENABLE_PASSPHRASE', { passphrase });
-}
-
-async function disablePassphrase() {
-  if (state.popup || state.privacyPending || !isUnlocked() || state.vault.mode !== 'passphrase') return;
-  if (!confirm('Remove the passphrase requirement and allow schedules to resume automatically after Chrome restarts or Prompt Later updates?')) return;
-  await changeProtection('DISABLE_PASSPHRASE');
+  $('privacy-settings').hidden = !(!state.popup && isUnlocked());
 }
 
 function renderVault(status, error = '') {
-  const locked = Boolean(error) || !status || status.locked;
-  state.vault = status ? { ...status, locked } : null;
-  const protectedMode = status?.mode === 'passphrase';
-  const unlockForm = locked && protectedMode && !state.popup;
-  $('vault-panel').hidden = !locked;
-  $('vault-form').hidden = !unlockForm;
-  $('vault-help').hidden = !unlockForm;
-  $('vault-title').textContent = protectedMode ? 'Unlock Prompt Later' : 'Saved data unavailable';
-  $('vault-description').textContent = protectedMode
-    ? state.popup ? 'Passphrase protection is enabled. Open the dashboard to unlock and resume schedules.' : 'Scheduled messages are paused while locked.'
-    : 'Try again to open your saved data. Nothing has been reset.';
-  $('vault-submit').disabled = !extension || !unlockForm || state.vaultPending;
-  $('vault-passphrase').disabled = !extension || !unlockForm || state.vaultPending;
-  if (!unlockForm) $('vault-passphrase').value = '';
+  const unavailable = Boolean(error) || !status;
+  state.vault = status ? { ...status, unavailable } : null;
+  $('vault-panel').hidden = !unavailable;
+  $('vault-title').textContent = 'Saved data unavailable';
+  $('vault-description').textContent = 'Try again to open your saved data. Nothing has been reset.';
   $('vault-retry').hidden = !error;
   text($('vault-status'), error);
   renderPrivacySettings();
   renderDeliverySettings();
-  if (locked) clearSchedulerView();
+  if (unavailable) clearSchedulerView();
   renderAccessGate();
   setPending(state.pending);
-}
-
-async function vaultSubmit(event) {
-  event.preventDefault();
-  if (state.popup || state.vaultPending || state.vault?.mode !== 'passphrase' || !extension) return;
-  const passphrase = $('vault-passphrase').value;
-  $('vault-passphrase').value = '';
-  state.vaultPending = true;
-  renderVault(state.vault);
-  let failure = '';
-  try {
-    const result = await send('UNLOCK_VAULT', { passphrase });
-    if (!result?.ok) throw new Error(result?.error || 'Vault request failed.');
-  } catch (error) {
-    failure = error?.message || 'Vault request failed.';
-  } finally {
-    state.vaultPending = false;
-  }
-  await load();
-  if (failure) {
-    if (!isUnlocked()) renderVault(state.vault, failure);
-    else setStatus(failure, true);
-  }
 }
 
 async function load() {
@@ -675,12 +562,8 @@ async function load() {
     if (generation !== state.loadGeneration) return;
     if (!result?.ok) throw new Error(result?.error || 'Could not read vault status.');
     status = result.data;
-    if (!status || status.configured !== true || !['device', 'passphrase'].includes(status.mode)
-        || typeof status.locked !== 'boolean' || typeof status.legacyData !== 'boolean') throw new Error('The vault status is unreadable.');
-    if (status.locked) {
-      renderVault(status);
-      return;
-    }
+    if (!status || status.configured !== true || status.mode !== 'device'
+        || typeof status.legacyData !== 'boolean') throw new Error('The vault status is unreadable.');
     const data = await send('GET_STATE');
     if (generation !== state.loadGeneration) return;
     if (!data?.ok) throw new Error(data?.error || 'Could not read saved messages.');
@@ -928,19 +811,10 @@ document.querySelectorAll('[role="tab"]').forEach(tab => {
   tab.addEventListener('click', switchTab);
   tab.addEventListener('keydown', navigateTabs);
 });
-$('vault-form').addEventListener('submit', vaultSubmit);
 $('permission-allow').addEventListener('click', grantAccess);
 $('permission-dismiss').addEventListener('click', dismissAccess);
 $('vault-retry').addEventListener('click', load);
-$('privacy-form').addEventListener('submit', privacySubmit);
 $('draft-policy').addEventListener('change', changeDraftPolicy);
-$('privacy-enable').addEventListener('click', showPassphraseForm);
-$('privacy-disable').addEventListener('click', disablePassphrase);
-$('privacy-cancel').addEventListener('click', () => {
-  resetPrivacyForm();
-  renderPrivacySettings();
-  $('privacy-enable').focus();
-});
 form.addEventListener('submit', save);
 $('current-tab').addEventListener('click', () => currentTab(false, true));
 $('current-tab-dialog').addEventListener('click', event => {

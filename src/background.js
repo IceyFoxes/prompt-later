@@ -4,7 +4,6 @@ import { createDelivery, inspectTarget } from './transport.js';
 import { isUiSender, UI_MESSAGE } from './protocol.js';
 import { parseTarget } from './targets.js';
 import { EDITOR_MESSAGE, editorJobFor, insertTiptapText } from './page-editor.js';
-import { VaultLockedError } from './vault-crypto.js';
 
 const api = globalThis.chrome;
 const store = api ? createVaultStore(api) : null;
@@ -33,7 +32,7 @@ function reply(sendResponse, data) {
 }
 
 function fail(sendResponse, error) {
-  sendResponse({ ok: false, error: error?.message || 'Request failed.', ...(error?.code === 'VAULT_LOCKED' ? { code: error.code } : {}) });
+  sendResponse({ ok: false, error: error?.message || 'Request failed.' });
 }
 
 function reportError() {
@@ -45,28 +44,25 @@ const storageReady = scheduler ? accessLevel() : Promise.resolve();
 export const ready = scheduler ? storageReady.then(() => store.initialize()) : Promise.resolve();
 let initialization;
 
-async function suspendScheduler(locked) {
+async function suspendScheduler() {
   scheduler.state = null;
   scheduler.initialized = false;
   await api.alarms.clear('prompt-later:due');
-  await api.action.setBadgeText({ text: locked ? 'LOCK' : '!' });
+  await api.action.setBadgeText({ text: '!' });
 }
 
 async function vaultStatus() {
   await storageReady;
-  let status;
   try {
-    status = await store.status();
+    return await store.status();
   } catch (error) {
-    await suspendScheduler(false);
+    await suspendScheduler();
     throw error;
   }
-  if (status.locked) await suspendScheduler(true);
-  return status;
 }
 
 async function activeScheduler() {
-  if ((await vaultStatus()).locked) throw new VaultLockedError();
+  await vaultStatus();
   if (!scheduler.initialized) {
     initialization ||= scheduler.initialize().finally(() => { initialization = null; });
     await initialization;
@@ -97,15 +93,6 @@ if (api) {
       await storageReady;
       const payload = message.payload || {};
       if (message.action === 'GET_VAULT_STATUS') return reply(sendResponse, await vaultStatus());
-      if (['UNLOCK_VAULT', 'ENABLE_PASSPHRASE', 'DISABLE_PASSPHRASE'].includes(message.action)) {
-        if (message.action === 'UNLOCK_VAULT') await store.unlock(payload.passphrase);
-        else if (message.action === 'ENABLE_PASSPHRASE') await store.enablePassphrase(payload.passphrase);
-        else await store.disablePassphrase();
-        await activeScheduler();
-        reply(sendResponse, await store.status());
-        runTick();
-        return;
-      }
       await activeScheduler();
       if (message.action === 'GET_STATE') {
         return reply(sendResponse, await scheduler.getState());
@@ -149,13 +136,11 @@ if (api) {
     return true;
   });
 
-  const tickError = async error => {
-    const locked = error?.code === 'VAULT_LOCKED';
-    await suspendScheduler(locked).catch(reportError);
-    if (!locked) reportError();
+  const tickError = async () => {
+    await suspendScheduler().catch(reportError);
+    reportError();
   };
   const runTick = () => storageReady.then(async () => {
-    if ((await vaultStatus()).locked) return;
     await activeScheduler();
     await scheduler.tick();
     await api.action.setBadgeText({ text: '' });

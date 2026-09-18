@@ -1,6 +1,6 @@
 import { emptyState, STORAGE_KEY, validateState } from './store.js';
 import { createDeviceKeyStore } from './device-key-store.js';
-import { VAULT_KEY, SESSION_KEY, VaultLockedError, decryptDeviceState, decryptState, deriveVaultKey, encryptDeviceState, encryptState, newVaultSalt, validSession, vaultMode } from './vault-crypto.js';
+import { VAULT_KEY, decryptDeviceState, encryptDeviceState, vaultMode } from './vault-crypto.js';
 
 export const STAGED_KEY = 'prompt-later.vault-next.v1';
 const queues = new WeakMap();
@@ -26,13 +26,7 @@ export function createVaultStore(api, deviceKeys = createDeviceKeyStore()) {
     return result;
   };
   const records = () => api.storage.local.get([VAULT_KEY, STORAGE_KEY, STAGED_KEY]);
-  const session = async () => (await api.storage.session.get(SESSION_KEY))[SESSION_KEY];
-  const statusFor = (mode, locked, data) => ({ configured: true, mode, locked, legacyData: has(data, STORAGE_KEY) });
-  const decrypt = (envelope, key) => vaultMode(envelope) === 'device' ? decryptDeviceState(envelope, key) : decryptState(envelope, key);
-
-  function checkLegacy(data, state) {
-    if (has(data, STORAGE_KEY) && !sameState(data[STORAGE_KEY], state)) throw conflict();
-  }
+  const readyStatus = () => ({ configured: true, mode: 'device', legacyData: false });
 
   async function unchanged(expected, keys = [VAULT_KEY, STORAGE_KEY, STAGED_KEY]) {
     const latest = await records();
@@ -40,148 +34,69 @@ export function createVaultStore(api, deviceKeys = createDeviceKeyStore()) {
     return latest;
   }
 
-  async function passphraseKey(envelope, passphrase) {
-    if (passphrase !== undefined) return deriveVaultKey(passphrase, envelope.salt);
-    const cached = await session();
-    return validSession(cached, envelope.salt) ? cached.key : null;
+  function checkLegacy(data, state) {
+    if (has(data, STORAGE_KEY) && !sameState(data[STORAGE_KEY], state)) throw conflict();
   }
 
-  async function cleanLegacy(state, envelope, key) {
-    const data = await records();
+  // Encrypt, store, then prove the bytes that actually landed decrypt back to
+  // what we meant to save. Every write is verified, not just migrations.
+  async function publish(state, key, expected) {
+    const envelope = await encryptDeviceState(state, key);
+    await unchanged(expected);
+    await api.storage.local.set({ [VAULT_KEY]: envelope });
+    const persisted = await records();
+    if (!same(persisted[VAULT_KEY], envelope) || !sameState(await decryptDeviceState(persisted[VAULT_KEY], key), state)) {
+      throw verificationError();
+    }
+    return { envelope, persisted };
+  }
+
+  // Plaintext is removed only once the encrypted copy is confirmed to hold the
+  // same data, so an interrupted migration always leaves something readable.
+  async function cleanLegacy(state, envelope, key, data) {
     if (!has(data, STORAGE_KEY)) return;
     checkLegacy(data, state);
-    if (!same(data[VAULT_KEY], envelope) || !sameState(await decrypt(data[VAULT_KEY], key), state)) throw verificationError();
-    await unchanged(data);
+    if (!same(data[VAULT_KEY], envelope) || !sameState(await decryptDeviceState(data[VAULT_KEY], key), state)) throw verificationError();
     await api.storage.local.remove(STORAGE_KEY);
-    if (has(await records(), STORAGE_KEY)) throw new Error('The legacy copy could not be removed. Try again to finish migration; saved copies were preserved.');
-  }
-
-  function stageInfo(data) {
-    const stage = data[STAGED_KEY];
-    if (!stage || Object.keys(stage).sort().join(',') !== 'envelope,sourceIv,version' || stage.version !== 1
-        || (stage.sourceIv !== null && (typeof stage.sourceIv !== 'string' || !/^[A-Za-z0-9+/]{16}$/.test(stage.sourceIv)))) {
-      throw new Error('The unfinished encrypted migration is unreadable. Saved copies were preserved.');
+    if (has(await records(), STORAGE_KEY)) {
+      throw new Error('The legacy copy could not be removed. Try again to finish migration; saved copies were preserved.');
     }
-    const mode = vaultMode(stage.envelope);
-    const source = data[VAULT_KEY];
-    const committed = has(data, VAULT_KEY) && source?.iv === stage.envelope.iv;
-    if (!committed && (stage.sourceIv === null ? has(data, VAULT_KEY) : !source || source.iv !== stage.sourceIv)) throw conflict();
-    if (!committed && source && vaultMode(source) === mode) throw conflict();
-    if (!source && mode !== 'device') throw conflict();
-    return { stage, mode, source, committed };
   }
 
-  async function finishStage(data, passphrase, suppliedKey) {
-    const { stage, mode, source, committed } = stageInfo(data);
-    const envelope = stage.envelope;
-    const passwordEnvelope = mode === 'passphrase' ? envelope : !committed && source ? source : null;
-    const passwordKey = passwordEnvelope ? suppliedKey || await passphraseKey(passwordEnvelope, passphrase) : null;
-    if (passwordEnvelope && !passwordKey) return { status: statusFor('passphrase', true, data) };
-    const key = mode === 'device' ? await deviceKeys.get(envelope.keyId) : passwordKey;
-    const state = await decrypt(envelope, key);
-    if (source && !committed) {
-      const sourceKey = mode === 'device' ? passwordKey : await deviceKeys.get(source.keyId);
-      if (!sameState(await decrypt(source, sourceKey), state)) throw conflict();
-    }
-    checkLegacy(data, state);
-    await unchanged(data);
-    if (!same(source, envelope)) await api.storage.local.set({ [VAULT_KEY]: envelope });
-    const persisted = await records();
-    if (!same(persisted[STAGED_KEY], stage) || !same(persisted[VAULT_KEY], envelope)
-        || !sameState(await decrypt(persisted[VAULT_KEY], key), state)) throw verificationError();
-    checkLegacy(persisted, state);
-    await api.storage.local.remove(STAGED_KEY);
-    const cleaned = await records();
-    if (has(cleaned, STAGED_KEY) || !same(cleaned[VAULT_KEY], envelope)) throw verificationError();
-    await cleanLegacy(state, envelope, key);
-    if (mode === 'passphrase') await api.storage.session.set({ [SESSION_KEY]: { salt: envelope.salt, key } });
-    else await api.storage.session.remove(SESSION_KEY);
-    return { status: statusFor(mode, false, {}), envelope, key, state };
+  // A staged record can only be left over from an interrupted migration by an
+  // older version. Once a verified vault exists it holds nothing unique.
+  async function dropStage(data) {
+    if (has(data, STAGED_KEY)) await api.storage.local.remove(STAGED_KEY);
   }
 
-  async function stageTransition(data, envelope, state, key) {
-    await unchanged(data);
-    const stage = { version: 1, sourceIv: data[VAULT_KEY]?.iv ?? null, envelope };
-    await api.storage.local.set({ [STAGED_KEY]: stage });
-    const persisted = await records();
-    if (!same(persisted[STAGED_KEY], stage) || !sameState(await decrypt(persisted[STAGED_KEY]?.envelope, key), state)) throw verificationError();
-    await unchanged(data, [VAULT_KEY, STORAGE_KEY]);
-    return finishStage(persisted, undefined, vaultMode(envelope) === 'passphrase' ? key : undefined);
-  }
-
-  async function access(passphrase) {
+  async function access() {
     const data = await records();
-    if (has(data, STAGED_KEY)) return finishStage(data, passphrase);
-    if (!has(data, VAULT_KEY)) {
-      const state = has(data, STORAGE_KEY) ? validateState(data[STORAGE_KEY]) : emptyState();
-      const key = await deviceKeys.getOrCreate();
-      return stageTransition(data, await encryptDeviceState(state, key), state, key);
+    if (has(data, VAULT_KEY)) {
+      const envelope = data[VAULT_KEY];
+      vaultMode(envelope);
+      const key = await deviceKeys.get(envelope.keyId);
+      const state = await decryptDeviceState(envelope, key);
+      await cleanLegacy(state, envelope, key, data);
+      await dropStage(data);
+      return { status: readyStatus(), envelope, key, state };
     }
-    const envelope = data[VAULT_KEY];
-    const mode = vaultMode(envelope);
-    if (mode === 'passphrase' && passphrase === undefined && has(data, STORAGE_KEY)) {
-      return { status: statusFor(mode, true, data) };
-    }
-    const key = mode === 'device' ? await deviceKeys.get(envelope.keyId) : await passphraseKey(envelope, passphrase);
-    if (mode === 'passphrase' && !key) return { status: statusFor(mode, true, data) };
-    const state = await decrypt(envelope, key);
-    await cleanLegacy(state, envelope, key);
-    if (mode === 'passphrase' && passphrase !== undefined) await api.storage.session.set({ [SESSION_KEY]: { salt: envelope.salt, key } });
-    return { status: statusFor(mode, false, {}), envelope, key, state };
-  }
-
-  async function unlocked() {
-    const current = await access();
-    if (current.status.locked) throw new VaultLockedError();
-    return current;
-  }
-
-  async function sourceRecords(current) {
-    const data = await records();
-    if (has(data, STAGED_KEY) || has(data, STORAGE_KEY) || !same(data[VAULT_KEY], current.envelope)) throw conflict();
-    return data;
+    const key = await deviceKeys.getOrCreate();
+    const state = has(data, STORAGE_KEY) ? validateState(data[STORAGE_KEY]) : emptyState();
+    const { envelope, persisted } = await publish(state, key, data);
+    await cleanLegacy(state, envelope, key, persisted);
+    await dropStage(persisted);
+    return { status: readyStatus(), envelope, key, state };
   }
 
   return {
     initialize: () => serial(async () => (await access()).status),
     status: () => serial(async () => (await access()).status),
-    unlock: passphrase => serial(async () => {
-      const data = await records();
-      let passwordMode;
-      if (has(data, STAGED_KEY)) {
-        const { mode, source, committed } = stageInfo(data);
-        passwordMode = mode === 'passphrase' || (!committed && source && vaultMode(source) === 'passphrase');
-      } else passwordMode = has(data, VAULT_KEY) && vaultMode(data[VAULT_KEY]) === 'passphrase';
-      if (!passwordMode) throw new Error('Automatic device protection does not require a passphrase. Nothing was reset.');
-      if (typeof passphrase !== 'string') throw new Error('Enter your passphrase to unlock.');
-      return (await access(passphrase)).status;
-    }),
-    enablePassphrase: passphrase => serial(async () => {
-      const current = await unlocked();
-      if (current.status.mode !== 'device') throw new Error('Passphrase protection is already enabled. Nothing was replaced.');
-      const data = await sourceRecords(current);
-      const salt = newVaultSalt();
-      const key = await deriveVaultKey(passphrase, salt);
-      const envelope = await encryptState(current.state, key, salt);
-      return (await stageTransition(data, envelope, current.state, key)).status;
-    }),
-    disablePassphrase: () => serial(async () => {
-      const current = await unlocked();
-      if (current.status.mode !== 'passphrase') throw new Error('Passphrase protection is not enabled.');
-      const data = await sourceRecords(current);
-      const key = await deviceKeys.getOrCreate();
-      const envelope = await encryptDeviceState(current.state, key);
-      return (await stageTransition(data, envelope, current.state, key)).status;
-    }),
-    read: () => serial(async () => (await unlocked()).state),
+    read: () => serial(async () => (await access()).state),
     write: state => serial(async () => {
-      const current = await unlocked();
-      const data = await sourceRecords(current);
-      const envelope = current.status.mode === 'device'
-        ? await encryptDeviceState(state, current.key, current.envelope.keyId)
-        : await encryptState(state, current.key, current.envelope.salt);
-      await unchanged(data);
-      await api.storage.local.set({ [VAULT_KEY]: envelope });
+      const current = await access();
+      const data = await records();
+      if (has(data, STAGED_KEY) || has(data, STORAGE_KEY) || !same(data[VAULT_KEY], current.envelope)) throw conflict();
+      await publish(state, current.key, data);
     }),
   };
 }

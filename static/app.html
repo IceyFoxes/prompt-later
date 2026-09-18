@@ -24,17 +24,8 @@
     <section id="vault-panel" class="panel gate-panel vault-panel" aria-labelledby="vault-title" hidden>
       <div class="gate-icon lock-icon" aria-hidden="true"></div>
       <div class="gate-copy"><p class="eyebrow">Private by design</p><h1 id="vault-title">Saved data unavailable</h1><p id="vault-description">Try again to open your saved data. Nothing has been reset.</p></div>
-      <form id="vault-form" hidden>
-        <div class="field"><label for="vault-passphrase">Passphrase</label><input id="vault-passphrase" type="password" minlength="12" maxlength="1024" required autocomplete="current-password" disabled></div>
-        <button class="primary" id="vault-submit" type="submit" disabled>Unlock and resume</button>
-      </form>
       <p id="vault-status" class="status" role="status"></p>
       <button class="secondary" id="vault-retry" type="button" hidden>Try again</button>
-      <div id="vault-help" class="gate-help" hidden>
-        <p>Unlock again after a browser restart or extension update. While unlocked, sending can continue with the popup closed and monitor off.</p>
-        <p>Unlocking resumes schedules and applies each job’s late policy; overdue messages may send immediately.</p>
-        <p class="warning">This passphrase cannot be recovered. Store it somewhere safe. Removing the extension deletes its saved data.</p>
-      </div>
     </section>
 
     <section id="permission-panel" class="panel gate-panel permission-panel" aria-labelledby="permission-title" hidden>
@@ -103,7 +94,7 @@
         <p class="queue-note"><span class="awake-dot" aria-hidden="true"></span><span>Keep the browser open and computer awake. Delivery can be delayed and account limits still apply.</span></p>
         <div id="job-list" class="stack"></div>
         <button id="job-list-toggle" class="list-toggle" type="button" hidden></button>
-        <details class="privacy"><summary><span class="privacy-icon" aria-hidden="true">✓</span><span><strong>Private by default</strong><small>Encrypted and stored on this device</small></span><span class="summary-chevron" aria-hidden="true"></span></summary><p>Saved messages, conversation URLs, schedules, and activity are encrypted locally using a browser-held device key by default. Optional passphrase protection is available under Advanced privacy in the full dashboard.</p><p>Messages are sent to the selected provider using your signed-in account. No extension backend, telemetry, or AI API key is used. Completed jobs remain until deleted; activity is retained separately.</p></details>
+        <details class="privacy"><summary><span class="privacy-icon" aria-hidden="true">✓</span><span><strong>Private by default</strong><small>Encrypted and stored on this device</small></span><span class="summary-chevron" aria-hidden="true"></span></summary><p>Saved messages, conversation URLs, schedules, and activity are encrypted locally using a browser-held device key by default. Details are under Advanced privacy in the full dashboard.</p><p>Messages are sent to the selected provider using your signed-in account. No extension backend, telemetry, or AI API key is used. Completed jobs remain until deleted; activity is retained separately.</p></details>
         <details id="delivery-settings" class="privacy-settings" hidden>
           <summary><span class="settings-icon" aria-hidden="true"></span><span><strong>Delivery</strong><small>What to do if you are mid-draft</small></span><span class="summary-chevron" aria-hidden="true"></span></summary>
           <div id="delivery-content">
@@ -121,12 +112,10 @@
           </div>
         </details>
         <details id="privacy-settings" class="privacy-settings" hidden>
-          <summary><span class="settings-icon" aria-hidden="true"></span><span><strong>Advanced privacy</strong><small>Manage saved-data protection</small></span><span class="summary-chevron" aria-hidden="true"></span></summary>
+          <summary><span class="settings-icon" aria-hidden="true"></span><span><strong>Advanced privacy</strong><small>How saved data is protected</small></span><span class="summary-chevron" aria-hidden="true"></span></summary>
           <div id="privacy-content">
-            <h3 id="privacy-title"></h3><p id="privacy-description"></p>
-            <button id="privacy-enable" class="secondary" type="button">Require a passphrase</button><button id="privacy-disable" class="secondary" type="button" hidden>Use automatic device protection</button>
-            <form id="privacy-form" hidden><p class="warning">A forgotten passphrase cannot be recovered. Browser restarts and extension updates pause schedules until you unlock in the dashboard.</p><div class="field"><label for="privacy-passphrase">Passphrase</label><input id="privacy-passphrase" type="password" minlength="12" maxlength="1024" required autocomplete="new-password"></div><div class="field"><label for="privacy-confirm">Confirm passphrase</label><input id="privacy-confirm" type="password" minlength="12" maxlength="1024" required autocomplete="new-password"></div><div class="actions"><button id="privacy-submit" class="primary" type="submit">Enable passphrase protection</button><button id="privacy-cancel" class="secondary" type="button">Cancel</button></div></form>
-            <p id="privacy-status" class="status" role="status"></p>
+            <h3 id="privacy-title">Automatic device protection</h3>
+            <p id="privacy-description">Saved messages, conversation URLs, schedules, and activity are encrypted with AES-256-GCM using a non-exportable key held by this browser profile, and resume automatically after restarts and updates. This is not hardware-backed protection; someone controlling the browser or profile may still reach the data.</p>
           </div>
         </details>
       </aside>

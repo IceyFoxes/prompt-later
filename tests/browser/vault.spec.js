@@ -2,7 +2,6 @@ import { expect, test } from '@playwright/test';
 import path from 'node:path';
 import { closeExtension, openExtension, readState, restartExtension, root, tickFromPage, writeState } from './helpers.js';
 
-const passphrase = 'Synthetic vault passphrase';
 const vaultKey = 'prompt-later.vault.v1';
 const sessionKey = 'prompt-later.vault-session.v1';
 const legacyKey = 'prompt-later.v1';
@@ -20,22 +19,6 @@ function fixtureState() {
 async function withExtension(options, callback) {
   const environment = await openExtension(options);
   try { await callback(environment); } finally { await closeExtension(environment); }
-}
-
-async function enterPassphrase(page, value) {
-  await expect(page.locator('#vault-passphrase')).toBeEnabled();
-  await page.locator('#vault-passphrase').fill(value);
-  await page.locator('#vault-submit').click();
-}
-
-async function enableProtection(page) {
-  await page.locator('#privacy-settings > summary').click();
-  await page.locator('#privacy-enable').click();
-  await page.locator('#privacy-passphrase').fill(passphrase);
-  await page.locator('#privacy-confirm').fill(passphrase);
-  await page.locator('#privacy-submit').click();
-  await expect(page.locator('#privacy-disable')).toBeVisible();
-  await expect(page.locator('#privacy-disable')).toBeEnabled();
 }
 
 async function saveJob(page, message) {
@@ -67,81 +50,18 @@ test('fresh installation schedules immediately with non-exportable device encryp
     const raw = await page.evaluate(() => chrome.storage.local.get(null));
     expect(raw[vaultKey]).toMatchObject({ version: 2, mode: 'device' });
     expect(Object.keys(raw)).toEqual([vaultKey]);
-    for (const secret of ['Encrypted synthetic prompt', targetUrl, passphrase]) expect(JSON.stringify(raw)).not.toContain(secret);
+    for (const secret of ['Encrypted synthetic prompt', targetUrl]) expect(JSON.stringify(raw)).not.toContain(secret);
     expect(await page.evaluate(key => chrome.storage.session.get(key), sessionKey)).toEqual({});
     await page.screenshot({ path: path.join(root, 'artifacts/screenshots/device-scheduler.png'), fullPage: true });
   });
 });
 
-test('fresh popup can save and never displays advanced or password controls', async () => {
+test('fresh popup can save and never displays advanced settings or password controls', async () => {
   await withExtension({ path: 'app.html?popup=1' }, async ({ page }) => {
     await expect(page.locator('#privacy-settings')).toBeHidden();
     await expect(page.locator('input[type="password"]:visible')).toHaveCount(0);
     await saveJob(page, 'Fresh popup fixture');
     expect((await readState(page)).jobs[0].message).toBe('Fresh popup fixture');
-  });
-});
-
-test('dashboard optional protection validates confirmation and preserves an open form during storage refresh', async () => {
-  await withExtension({}, async ({ page }) => {
-    await writeState(page, fixtureState());
-    const before = await readState(page);
-    await page.locator('#privacy-settings > summary').click();
-    await expect(page.locator('#privacy-title')).toHaveText('Automatic device protection');
-    await page.screenshot({ path: path.join(root, 'artifacts/screenshots/advanced-privacy.png'), fullPage: true });
-    await page.locator('#privacy-enable').click();
-    await page.locator('#privacy-passphrase').fill('short');
-    await page.locator('#privacy-confirm').fill('short');
-    await page.locator('#privacy-submit').click();
-    expect((await envelope(page)).mode).toBe('device');
-    await page.locator('#privacy-passphrase').fill(passphrase);
-    await page.locator('#privacy-confirm').fill('Different synthetic passphrase');
-    await tickFromPage(page);
-    await expect(page.locator('#privacy-passphrase')).toHaveValue(passphrase);
-    await page.locator('#privacy-submit').click();
-    await expect(page.locator('#privacy-status')).toHaveText('Passphrases do not match.');
-    expect((await envelope(page)).mode).toBe('device');
-    await expect(page.locator('#privacy-passphrase')).toHaveValue('');
-    await expect(page.locator('#privacy-confirm')).toHaveValue('');
-    await page.locator('#privacy-passphrase').fill(passphrase);
-    await page.locator('#privacy-confirm').fill(passphrase);
-    await page.locator('#privacy-submit').click();
-    await expect(page.locator('#privacy-disable')).toBeVisible();
-    await expect(page.locator('#privacy-disable')).toBeEnabled();
-    expect((await envelope(page)).version).toBe(1);
-    expect(await readState(page)).toEqual(before);
-    await expect(page.locator('#privacy-passphrase')).toHaveValue('');
-  });
-});
-
-test('optional protection reports RPC errors and prevents duplicate pending submissions', async () => {
-  await withExtension({}, async ({ page }) => {
-    await page.locator('#privacy-settings > summary').click();
-    await page.locator('#privacy-enable').click();
-    await page.evaluate(() => {
-      const original = chrome.runtime.sendMessage;
-      const held = new Promise(resolve => { window.__finishProtection = resolve; });
-      window.__protectionCalls = 0;
-      chrome.runtime.sendMessage = async message => {
-        if (message.action === 'ENABLE_PASSPHRASE') {
-          window.__protectionCalls += 1;
-          await held;
-          throw new Error('Synthetic protection failure');
-        }
-        return original.call(chrome.runtime, message);
-      };
-    });
-    await page.locator('#privacy-passphrase').fill(passphrase);
-    await page.locator('#privacy-confirm').fill(passphrase);
-    await page.locator('#privacy-submit').click();
-    await expect(page.locator('#privacy-submit')).toBeDisabled();
-    await expect(page.locator('#privacy-cancel')).toBeDisabled();
-    await page.locator('#privacy-form').dispatchEvent('submit');
-    expect(await page.evaluate(() => window.__protectionCalls)).toBe(1);
-    await page.evaluate(() => window.__finishProtection());
-    await expect(page.locator('#privacy-status')).toContainText('Synthetic protection failure');
-    await expect(page.locator('#privacy-submit')).toBeEnabled();
-    expect((await envelope(page)).mode).toBe('device');
   });
 });
 
@@ -162,27 +82,6 @@ test('legacy plaintext migrates automatically and preserves exact jobs and activ
   });
 });
 
-test('existing v1 passphrase fixture is not silently downgraded and remains readable with the original passphrase', async () => {
-  await withExtension({}, async environment => {
-    await tickFromPage(environment.page);
-    await environment.page.evaluate(() => chrome.alarms.clearAll());
-    const original = fixtureState();
-    await environment.page.evaluate(async ({ state, passphrase }) => {
-      const module = await import(chrome.runtime.getURL('vault-fixture.js'));
-      await module.seedPassphraseState(state, passphrase);
-    }, { state: original, passphrase });
-    const before = await envelope(environment.page);
-    await restartExtension(environment);
-    const { page } = environment;
-    await expect(page.locator('#vault-form')).toBeVisible();
-    expect(await envelope(page)).toEqual(before);
-    await enterPassphrase(page, passphrase);
-    await expect(page.locator('#scheduler-view')).toBeVisible();
-    expect(await readState(page)).toEqual(original);
-    expect((await envelope(page)).version).toBe(1);
-  });
-});
-
 test('device protection keeps exact data automatically available after browser restart', async () => {
   await withExtension({}, async environment => {
     const original = fixtureState();
@@ -193,88 +92,14 @@ test('device protection keeps exact data automatically available after browser r
     await expect(page.locator('#scheduler-view')).toBeVisible();
     await expect(page.locator('#vault-panel')).toBeHidden();
     expect(await readState(page)).toEqual(original);
-    expect((await status(page)).data).toMatchObject({ mode: 'device', locked: false });
+    expect((await status(page)).data).toMatchObject({ mode: 'device' });
     await expect.poll(() => page.evaluate(() => chrome.action.getBadgeText({}))).toBe('');
     expect((await keyInfo(page)).extractable).toBe(false);
   });
 });
 
-test('passphrase restart locks popup, dashboard unlock applies both late policies exactly once', async () => {
-  test.setTimeout(60000);
-  await withExtension({}, async environment => {
-    await enableProtection(environment.page);
-    await tickFromPage(environment.page);
-    await environment.page.evaluate(() => chrome.alarms.clearAll());
-    const original = fixtureState().jobs[0];
-    const due = Date.now() - 400000;
-    const jobs = ['run-once', 'skip'].map(policy => ({ ...original, id: `${policy}-job`, message: `Restart ${policy} fixture`, missedPolicy: policy, schedule: { ...original.schedule, at: due }, nextRunAt: due }));
-    await writeState(environment.page, { version: 1, jobs, history: [] });
-    await restartExtension(environment);
-    const { page, context, id } = environment;
-    await expect(page.locator('#scheduler-view')).toBeHidden();
-    expect(await page.evaluate(key => chrome.storage.session.get(key), sessionKey)).toEqual({});
-    expect(await page.evaluate(() => chrome.runtime.sendMessage({ type: 'PL_UI', action: 'GET_STATE' }))).toMatchObject({ ok: false, code: 'VAULT_LOCKED' });
-    await expect.poll(() => page.evaluate(() => chrome.action.getBadgeText({}))).toBe('LOCK');
-    const popup = await context.newPage();
-    await popup.goto(`chrome-extension://${id}/app.html?popup=1`);
-    await expect(popup.locator('#vault-description')).toContainText('Open the dashboard to unlock');
-    await expect(popup.locator('#vault-form')).toBeHidden();
-    await expect(popup.locator('#privacy-settings')).toBeHidden();
-    await expect(popup.locator('input[type="password"]:visible')).toHaveCount(0);
-    await popup.screenshot({ path: path.join(root, 'artifacts/screenshots/passphrase-locked-popup.png') });
-    await page.screenshot({ path: path.join(root, 'artifacts/screenshots/passphrase-locked-dashboard.png') });
-    const dashboardPromise = context.waitForEvent('page');
-    await popup.locator('#dashboard-link').click();
-    const dashboard = await dashboardPromise;
-    const provider = await context.newPage();
-    await provider.goto(targetUrl);
-    const before = await envelope(dashboard);
-    await enterPassphrase(dashboard, 'Incorrect synthetic passphrase');
-    await expect(dashboard.locator('#vault-status')).toContainText('incorrect');
-    expect(await envelope(dashboard)).toEqual(before);
-    await expect(provider.locator('[data-message-author-role="user"]')).toHaveCount(0);
-    await enterPassphrase(dashboard, passphrase);
-    await expect(dashboard.locator('#scheduler-view')).toBeVisible();
-    await expect(provider.locator('[data-message-author-role="user"]')).toHaveText('Restart run-once fixture');
-    await tickFromPage(dashboard);
-    const stored = await readState(dashboard);
-    expect(stored.history.map(run => run.status).sort()).toEqual(['sent', 'skipped']);
-    expect(stored.jobs.every(job => job.status === 'completed' && !job.enabled)).toBe(true);
-    await tickFromPage(dashboard);
-    await expect(provider.locator('[data-message-author-role="user"]')).toHaveCount(1);
-  });
-});
-
-test('disabling protection requires confirmation, preserves data, and resumes automatically on restart', async () => {
-  await withExtension({}, async environment => {
-    const { page } = environment;
-    const original = fixtureState();
-    await writeState(page, original);
-    await enableProtection(page);
-    await tickFromPage(page);
-    const before = await envelope(page);
-    page.once('dialog', dialog => dialog.dismiss());
-    await page.locator('#privacy-disable').click();
-    expect(await envelope(page)).toEqual(before);
-    page.once('dialog', dialog => {
-      expect(dialog.message()).toBe('Remove the passphrase requirement and allow schedules to resume automatically after Chrome restarts or Prompt Later updates?');
-      return dialog.accept();
-    });
-    await page.locator('#privacy-disable').click();
-    await expect(page.locator('#privacy-enable')).toBeVisible();
-    await expect(page.locator('#privacy-enable')).toBeEnabled();
-    expect(await readState(page)).toEqual(original);
-    expect(await page.evaluate(key => chrome.storage.session.get(key), sessionKey)).toEqual({});
-    await restartExtension(environment);
-    await expect(environment.page.locator('#scheduler-view')).toBeVisible();
-    expect(await readState(environment.page)).toEqual(original);
-  });
-});
-
-for (const mode of ['device', 'passphrase']) {
-  test(`${mode} worker-only restart keeps saved data usable without another unlock`, async () => {
-    await withExtension({}, async ({ page, context, id }) => {
-      if (mode === 'passphrase') await enableProtection(page);
+test('worker-only restart keeps saved data usable', async () => {
+  await withExtension({}, async ({ page, context, id }) => {
       await saveJob(page, 'Worker restart fixture');
       await tickFromPage(page);
       const before = await readState(page);
@@ -285,14 +110,13 @@ for (const mode of ['device', 'passphrase']) {
       expect((await session.send('Target.closeTarget', { targetId: workers[0].targetId })).success).toBe(true);
       const response = await page.evaluate(() => chrome.runtime.sendMessage({ type: 'PL_UI', action: 'GET_STATE' }));
       expect(response).toMatchObject({ ok: true, data: before });
-      expect(await page.evaluate(async key => Boolean((await chrome.storage.session.get(key))[key]), sessionKey)).toBe(mode === 'passphrase');
+      expect(await page.evaluate(async key => Boolean((await chrome.storage.session.get(key))[key]), sessionKey)).toBe(false);
       await session.detach();
-    });
   });
-}
+});
 
 for (const action of ['GET_VAULT_STATUS', 'GET_STATE']) {
-  test(`vault clears decrypted UI on failed ${action} RPC and offers retry, not a device passphrase`, async () => {
+  test(`vault clears decrypted UI on failed ${action} RPC and offers retry`, async () => {
     await withExtension({}, async ({ page }) => {
       await saveJob(page, 'Private saved fixture text');
       await page.locator('#message').fill('Private unsaved fixture text');
@@ -314,8 +138,7 @@ for (const action of ['GET_VAULT_STATUS', 'GET_STATE']) {
       await expect(page.locator('#message')).toHaveValue('');
       await expect(page.locator('#url')).toHaveValue('');
       expect(await page.locator('body').textContent()).not.toContain('Private saved fixture text');
-      for (const selector of ['#save', '#check', '#current-tab', '#vault-submit']) await expect(page.locator(selector)).toBeDisabled();
-      await expect(page.locator('#vault-form')).toBeHidden();
+      for (const selector of ['#save', '#check', '#current-tab']) await expect(page.locator(selector)).toBeDisabled();
       await expect(page.locator('#vault-retry')).toBeVisible();
       await page.evaluate(() => window.__restoreVaultRpc());
       await page.locator('#vault-retry').click();
@@ -325,20 +148,20 @@ for (const action of ['GET_VAULT_STATUS', 'GET_STATE']) {
   });
 }
 
-test('content contexts cannot change protection, read state, or access extension storage', async () => {
+test('content contexts cannot read state, change settings, or access extension storage', async () => {
   await withExtension({}, async ({ page, context }) => {
     await tickFromPage(page);
     const before = await envelope(page);
     const provider = await context.newPage();
     await provider.goto(targetUrl);
-    const result = await page.evaluate(async ({ url, passphrase }) => {
+    const result = await page.evaluate(async ({ url }) => {
       const [tab] = await chrome.tabs.query({ url });
       const [execution] = await chrome.scripting.executeScript({
-        target: { tabId: tab.id, frameIds: [0] }, world: 'ISOLATED', args: [passphrase],
-        func: async passphrase => {
+        target: { tabId: tab.id, frameIds: [0] }, world: 'ISOLATED',
+        func: async () => {
           const rpc = [];
-          for (const action of ['UNLOCK_VAULT', 'ENABLE_PASSPHRASE', 'DISABLE_PASSPHRASE', 'GET_STATE']) {
-            try { rpc.push(Boolean((await chrome.runtime.sendMessage({ type: 'PL_UI', action, payload: { passphrase } }))?.ok)); } catch { rpc.push(false); }
+          for (const action of ['GET_STATE', 'UPDATE_SETTINGS', 'DELETE_JOB']) {
+            try { rpc.push(Boolean((await chrome.runtime.sendMessage({ type: 'PL_UI', action, payload: {} }))?.ok)); } catch { rpc.push(false); }
           }
           const storage = {};
           for (const area of ['local', 'session']) {
@@ -348,8 +171,8 @@ test('content contexts cannot change protection, read state, or access extension
         },
       });
       return execution.result;
-    }, { url: targetUrl, passphrase });
-    expect(result).toEqual({ rpc: [false, false, false, false], storage: { local: 'denied', session: 'denied' } });
+    }, { url: targetUrl });
+    expect(result).toEqual({ rpc: [false, false, false], storage: { local: 'denied', session: 'denied' } });
     expect(await envelope(page)).toEqual(before);
   });
 });
@@ -445,7 +268,7 @@ test('an IndexedDB transaction abort after request success does not report persi
   });
 });
 
-test('popup captures its exact source conversation once without passphrase setup', async () => {
+test('popup captures its exact source conversation once without any setup', async () => {
   await withExtension({}, async ({ page, context, id }) => {
     const provider = await context.newPage();
     await provider.goto(targetUrl);
@@ -487,5 +310,57 @@ test('asynchronous save does not reuse a previous success message', async () => 
     await expect(page.locator('#form-status')).toHaveText('Message scheduled.');
     await expect(page.locator('#save')).toBeEnabled();
     expect((await readState(page)).jobs).toHaveLength(2);
+  });
+});
+
+test('a passphrase vault from an older version explains how to recover it', async () => {
+  await withExtension({}, async ({ page }) => {
+    await tickFromPage(page);
+    await page.evaluate(() => chrome.alarms.clearAll());
+    // Shaped like a v1 record but never readable here; the point is the wording.
+    await page.evaluate(async key => {
+      await chrome.storage.local.set({
+        [key]: {
+          version: 1,
+          kdf: 'PBKDF2-SHA256',
+          iterations: 600000,
+          salt: btoa(String.fromCharCode(...new Uint8Array(16).fill(7))),
+          cipher: 'AES-GCM-256',
+          iv: btoa(String.fromCharCode(...new Uint8Array(12).fill(3))),
+          data: btoa(String.fromCharCode(...new Uint8Array(32).fill(5))),
+        },
+      });
+    }, vaultKey);
+    const before = await envelope(page);
+    await page.reload();
+    await expect(page.locator('#vault-panel')).toBeVisible();
+    await expect(page.locator('#vault-status')).toContainText('no longer supported');
+    await expect(page.locator('#vault-status')).toContainText('turn off passphrase protection');
+    await expect(page.locator('#scheduler-view')).toBeHidden();
+    // Nothing is reset, so the previous version can still open it.
+    expect(await envelope(page)).toEqual(before);
+  });
+});
+
+test('overdue jobs apply both late policies exactly once without any unlock', async () => {
+  test.setTimeout(60000);
+  await withExtension({}, async ({ page, context }) => {
+    await tickFromPage(page);
+    await page.evaluate(() => chrome.alarms.clearAll());
+    const original = fixtureState().jobs[0];
+    const due = Date.now() - 400000;
+    const jobs = ['run-once', 'skip'].map(policy => ({ ...original, id: `${policy}-job`, message: `Overdue ${policy} fixture`, missedPolicy: policy, schedule: { ...original.schedule, at: due }, nextRunAt: due }));
+    await writeState(page, { version: 1, jobs, history: [] });
+    const provider = await context.newPage();
+    await provider.goto(targetUrl);
+    await tickFromPage(page);
+    await expect(provider.locator('[data-message-author-role="user"]')).toHaveText('Overdue run-once fixture');
+    const stored = await readState(page);
+    expect(stored.history.map(run => run.status).sort()).toEqual(['sent', 'skipped']);
+    expect(stored.jobs.every(job => job.status === 'completed' && !job.enabled)).toBe(true);
+    // A second tick must not deliver either job again.
+    await tickFromPage(page);
+    await expect(provider.locator('[data-message-author-role="user"]')).toHaveCount(1);
+    await provider.close();
   });
 });

@@ -2,19 +2,10 @@ import { validateState } from './store.js';
 import { DEVICE_KEY_ID, validDeviceKey } from './device-key-store.js';
 
 export const VAULT_KEY = 'prompt-later.vault.v1';
-export const SESSION_KEY = 'prompt-later.vault-session.v1';
-export const KDF_ITERATIONS = 600000;
 const MAX_PLAINTEXT_BYTES = 7 * 1024 * 1024;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder('utf-8', { fatal: true });
 const cryptoApi = globalThis.crypto;
-
-export class VaultLockedError extends Error {
-  constructor(message = 'Unlock Prompt Later to resume scheduling.') {
-    super(message);
-    this.code = 'VAULT_LOCKED';
-  }
-}
 
 function encode(bytes) {
   let binary = '';
@@ -36,99 +27,6 @@ function decode(value, size) {
   return bytes;
 }
 
-export function newVaultSalt() {
-  return encode(cryptoApi.getRandomValues(new Uint8Array(16)));
-}
-
-export function validSession(session, salt) {
-  try {
-    return session?.salt === salt && decode(session.key, 32).length === 32;
-  } catch {
-    return false;
-  }
-}
-
-export function validateEnvelope(value) {
-  const keys = ['cipher', 'data', 'iterations', 'iv', 'kdf', 'salt', 'version'];
-  if (!value || typeof value !== 'object' || Object.keys(value).sort().join(',') !== keys.join(',')
-      || value.version !== 1 || value.kdf !== 'PBKDF2-SHA256' || value.iterations !== KDF_ITERATIONS
-      || value.cipher !== 'AES-GCM-256') {
-    throw new Error('The saved vault is unreadable or unsupported. Nothing was reset.');
-  }
-  decode(value.salt, 16);
-  decode(value.iv, 12);
-  if (decode(value.data).length < 16) throw new Error('The saved vault is incomplete. Nothing was reset.');
-  return value;
-}
-
-function additionalData(salt) {
-  return encoder.encode(`prompt-later:vault:1:PBKDF2-SHA256:${KDF_ITERATIONS}:${salt}`);
-}
-
-export async function deriveVaultKey(passphrase, salt) {
-  if (typeof passphrase !== 'string' || passphrase.length < 12 || passphrase.length > 1024 || !passphrase.trim()) {
-    throw new Error('Use a passphrase of 12–1,024 characters. A unique multi-word passphrase is recommended.');
-  }
-  const saltBytes = decode(salt, 16);
-  const password = encoder.encode(passphrase);
-  try {
-    const material = await cryptoApi.subtle.importKey('raw', password, 'PBKDF2', false, ['deriveBits']);
-    const bytes = new Uint8Array(await cryptoApi.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: saltBytes, iterations: KDF_ITERATIONS }, material, 256));
-    try {
-      return encode(bytes);
-    } finally {
-      bytes.fill(0);
-    }
-  } finally {
-    password.fill(0);
-  }
-}
-
-async function importAesKey(rawKey, usage) {
-  const bytes = decode(rawKey, 32);
-  try {
-    return await cryptoApi.subtle.importKey('raw', bytes, { name: 'AES-GCM' }, false, [usage]);
-  } finally {
-    bytes.fill(0);
-  }
-}
-
-export async function encryptState(state, rawKey, salt) {
-  decode(salt, 16);
-  const plaintext = encoder.encode(JSON.stringify(validateState(state)));
-  try {
-    if (plaintext.length > MAX_PLAINTEXT_BYTES) throw new Error('Saved data is too large for the encrypted vault. Existing data was left intact.');
-    const iv = cryptoApi.getRandomValues(new Uint8Array(12));
-    const key = await importAesKey(rawKey, 'encrypt');
-    const ciphertext = await cryptoApi.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: additionalData(salt), tagLength: 128 }, key, plaintext);
-    return {
-      version: 1,
-      kdf: 'PBKDF2-SHA256',
-      iterations: KDF_ITERATIONS,
-      salt,
-      cipher: 'AES-GCM-256',
-      iv: encode(iv),
-      data: encode(new Uint8Array(ciphertext)),
-    };
-  } finally {
-    plaintext.fill(0);
-  }
-}
-
-export async function decryptState(envelope, rawKey) {
-  validateEnvelope(envelope);
-  const key = await importAesKey(rawKey, 'decrypt');
-  let plaintext;
-  try {
-    plaintext = new Uint8Array(await cryptoApi.subtle.decrypt({ name: 'AES-GCM', iv: decode(envelope.iv, 12), additionalData: additionalData(envelope.salt), tagLength: 128 }, key, decode(envelope.data)));
-    return validateState(JSON.parse(decoder.decode(plaintext)));
-  } catch {
-    throw new Error('The passphrase is incorrect or the saved vault is damaged. Nothing was reset.');
-  } finally {
-    plaintext?.fill(0);
-  }
-}
-
 function deviceAdditionalData(keyId) {
   return encoder.encode(`prompt-later:vault:2:device:${keyId}`);
 }
@@ -144,10 +42,15 @@ export function validateDeviceEnvelope(value) {
   return value;
 }
 
+// Passphrase protection was removed. A vault left in that form cannot be read
+// here, so say exactly how to recover it rather than reporting damage.
+export function isPassphraseEnvelope(value) {
+  return value?.version === 1 && value?.kdf === 'PBKDF2-SHA256';
+}
+
 export function vaultMode(value) {
-  if (value?.version === 1 && value?.kdf === 'PBKDF2-SHA256') {
-    validateEnvelope(value);
-    return 'passphrase';
+  if (isPassphraseEnvelope(value)) {
+    throw new Error('This copy is protected by a passphrase, which is no longer supported. Reinstall the previous version, turn off passphrase protection, then update again. Nothing was reset.');
   }
   if (value?.version === 2 && value?.mode === 'device') {
     validateDeviceEnvelope(value);
