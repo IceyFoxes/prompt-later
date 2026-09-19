@@ -464,6 +464,7 @@ testWithExtension('popup returns to its compact height after hiding saved messag
     await page.locator('#when').selectOption('1m');
     await page.locator('#message').fill(`Popup size ${index}`);
     await page.locator('#save').click();
+    await expect(page.locator('#form-status')).toContainText('Message scheduled.');
   }
   const stored = await readState(page);
   stored.history = Array.from({ length: 8 }, (_, index) => ({
@@ -475,11 +476,21 @@ testWithExtension('popup returns to its compact height after hiding saved messag
   const popup = await context.newPage();
   await popup.setViewportSize({ width: 320, height: 600 });
   await popup.goto(`chrome-extension://${id}/app.html?popup=1`);
+  await popup.locator('#scheduler-view').waitFor({ state: 'visible' });
+  await expect(popup.locator('#job-count')).toHaveText('5');
+  await expect(popup.locator('#popup-queue-toggle')).toHaveText('Show');
+  await expect(popup.locator('#popup-queue-toggle')).toHaveAttribute('aria-expanded', 'false');
   const shellHeight = () => popup.locator('.shell').evaluate(node => Math.ceil(node.getBoundingClientRect().height));
   const compact = await shellHeight();
   await popup.locator('#popup-queue-toggle').click();
+  await expect(popup.locator('#popup-queue-toggle')).toHaveText('Hide');
+  await expect(popup.locator('#popup-queue-toggle')).toHaveAttribute('aria-expanded', 'true');
+  await expect(popup.locator('#job-list')).toBeVisible();
   await expect.poll(shellHeight).toBeGreaterThan(compact);
   await popup.locator('#popup-queue-toggle').click();
+  await expect(popup.locator('#popup-queue-toggle')).toHaveText('Show');
+  await expect(popup.locator('#popup-queue-toggle')).toHaveAttribute('aria-expanded', 'false');
+  await expect(popup.locator('#job-list')).toBeHidden();
   await expect.poll(shellHeight).toBeLessThanOrEqual(compact + 2);
   await popup.locator('[data-tab="activity"]').click();
   await expect.poll(shellHeight).toBeGreaterThan(compact);
