@@ -91,6 +91,7 @@ test('R2 editing, delay defaults, recurrence anchors, deletion, and tab switchin
     expect(updated.jobs).toHaveLength(1);
     expect(updated.jobs[0].message).toBe('Updated');
     await page.locator('[data-tab="recurring"]').click();
+    await page.locator('#recurrence').selectOption('interval');
     await page.locator('#url').fill('https://chatgpt.com/c/interval');
     await page.locator('#message').fill('Every five hours');
     await expect(page.locator('#next-preview')).toContainText('Next occurrence');
@@ -113,9 +114,10 @@ test('R2 editing, delay defaults, recurrence anchors, deletion, and tab switchin
     await saveJob(page, 'https://chatgpt.com/c/new-job', 'New job');
     const state = await readState(page);
     expect(state.jobs).toHaveLength(3);
-    page.once('dialog', dialog => dialog.accept());
     await page.locator('[data-tab="recurring"]').click();
     await page.getByRole('button', { name: 'Delete' }).click();
+    await expect(page.locator('#confirmation-dialog')).toBeVisible();
+    await page.locator('#confirmation-accept').click();
     await expect(page.locator('#job-list')).not.toContainText('Every five hours edited');
   });
 });
@@ -327,6 +329,112 @@ test('R10 text, activity, Devin badge, source-tab dashboard, timezone, and popup
   });
 });
 
+test('attention badge counts distinct affected jobs and clears as activity resolves', async () => {
+  await withExtension({}, async ({ page }) => {
+    await saveJob(page, 'https://chatgpt.com/c/attention-one', 'Attention one');
+    await saveJob(page, 'https://chatgpt.com/c/attention-two', 'Attention two');
+    let state = await readState(page);
+    const first = state.jobs[0];
+    const second = state.jobs[1];
+    state.jobs = [{ ...first, status: 'needs-attention', enabled: false, nextRunAt: null, runId: null, lastOutcome: 'blocked', lastDetail: 'Needs review.' }, second];
+    state.history = [];
+    await page.evaluate(async value => {
+      const module = await import(chrome.runtime.getURL('vault-fixture.js'));
+      await module.writeState(value);
+    }, state);
+    const updateSettings = () => page.evaluate(async () => chrome.runtime.sendMessage({ type: 'PL_UI', action: 'UPDATE_SETTINGS', payload: { draftPolicy: 'skip' } }));
+    await updateSettings();
+    await expect.poll(() => page.evaluate(() => chrome.action.getBadgeText({}))).toBe('1');
+
+    state = await readState(page);
+    state.history = [
+      { id: 'attention-run-a', jobId: second.id, url: second.url, provider: second.provider, preview: second.message, dueAt: 1, startedAt: 1, finishedAt: 2, status: 'uncertain', detail: 'Uncertain.' },
+      { id: 'attention-run-b', jobId: second.id, url: second.url, provider: second.provider, preview: second.message, dueAt: 3, startedAt: 3, finishedAt: 4, status: 'uncertain', detail: 'Uncertain again.' },
+    ];
+    await page.evaluate(async value => {
+      const module = await import(chrome.runtime.getURL('vault-fixture.js'));
+      await module.writeState(value);
+    }, state);
+    await updateSettings();
+    await expect.poll(() => page.evaluate(() => chrome.action.getBadgeText({}))).toBe('2');
+
+    const firstRun = state.history[0];
+    const secondRun = state.history[1];
+    await page.evaluate(async id => chrome.runtime.sendMessage({ type: 'PL_UI', action: 'SET_ENABLED', payload: { id, enabled: true } }), first.id);
+    await expect.poll(() => page.evaluate(() => chrome.action.getBadgeText({}))).toBe('1');
+    await page.evaluate(async id => chrome.runtime.sendMessage({ type: 'PL_UI', action: 'DELETE_ACTIVITY', payload: { id } }), firstRun.id);
+    await expect.poll(() => page.evaluate(() => chrome.action.getBadgeText({}))).toBe('1');
+    await page.evaluate(async id => chrome.runtime.sendMessage({ type: 'PL_UI', action: 'DELETE_ACTIVITY', payload: { id } }), secondRun.id);
+    await expect.poll(() => page.evaluate(() => chrome.action.getBadgeText({}))).toBe('');
+
+    state = await readState(page);
+    state.history = Array.from({ length: 10 }, (_, index) => ({
+      id: `orphan-uncertain-${index}`,
+      jobId: `orphan-job-${index}`,
+      url: second.url,
+      provider: second.provider,
+      preview: 'Orphan uncertain activity',
+      dueAt: index + 1,
+      startedAt: index + 2,
+      finishedAt: index + 3,
+      status: 'uncertain',
+      detail: 'Orphan uncertain detail',
+    }));
+    await page.evaluate(async value => {
+      const module = await import(chrome.runtime.getURL('vault-fixture.js'));
+      await module.writeState(value);
+    }, state);
+    await updateSettings();
+    await expect.poll(() => page.evaluate(() => chrome.action.getBadgeText({}))).toBe('9+');
+    const clearResult = await page.evaluate(async () => chrome.runtime.sendMessage({ type: 'PL_UI', action: 'CLEAR_ACTIVITY', payload: {} }));
+    expect(clearResult.ok).toBe(true);
+    await expect.poll(() => page.evaluate(() => chrome.action.getBadgeText({}))).toBe('');
+  });
+});
+
+test('send-both idle timeout records partial send and does not retry the first draft', async () => {
+  await withExtension({ fixture: { busyAfterFirstClickMs: 20 * 60 * 1000 } }, async ({ page, context }) => {
+    await page.locator('[data-tab="info"]').click();
+    await page.locator('#delivery-settings').evaluate(node => { node.open = true; });
+    await page.locator('#draft-policy').selectOption('send-both');
+    await expect(page.locator('#delivery-status')).toContainText('Saved.');
+    await page.locator('[data-tab="recurring"]').click();
+    await page.locator('#recurrence').selectOption('daily');
+    await page.locator('#url').fill('https://chatgpt.com/c/send-both-timeout');
+    await page.locator('#message').fill('Scheduled after timeout');
+    await page.locator('#save').click();
+    const provider = await context.newPage();
+    await provider.goto('https://chatgpt.com/c/send-both-timeout');
+    await provider.locator('#prompt-textarea').fill('First draft');
+    await provider.clock.install();
+    await dueState(page, job => job.url === 'https://chatgpt.com/c/send-both-timeout');
+    await page.evaluate(() => chrome.alarms.create('prompt-later:due', { when: Date.now() }));
+    await expect(provider.locator('[data-message-author-role="user"]')).toHaveCount(1);
+    await expect(provider.locator('[data-message-author-role="user"]')).toHaveText('First draft');
+    for (let index = 0; index <= 600; index += 1) await provider.clock.fastForward(1000);
+    const jumpedAt = await provider.evaluate(() => Date.now());
+    const providerTabId = await page.evaluate(async url => (await chrome.tabs.query({ url }))[0].id, 'https://chatgpt.com/c/send-both-timeout');
+    await page.evaluate(async ({ tabId, time }) => chrome.scripting.executeScript({
+      target: { tabId, frameIds: [0] },
+      world: 'ISOLATED',
+      func: value => { Date.now = () => value; },
+      args: [time],
+    }), { tabId: providerTabId, time: jumpedAt });
+    await expect.poll(async () => (await readState(page)).history.at(-1)?.status).toBe('uncertain');
+    const state = await readState(page);
+    const job = state.jobs.find(item => item.url === 'https://chatgpt.com/c/send-both-timeout');
+    expect(state.history.at(-1).detail).toContain('The existing draft was sent, but the scheduled message was not confirmed.');
+    expect(state.history.at(-1).detail).toContain('The provider did not become idle within 10 minutes after the existing draft was sent.');
+    expect(job.enabled).toBe(true);
+    expect(job.status).toBe('scheduled');
+    expect(job.nextRunAt).toBeGreaterThan(Date.now());
+    await page.evaluate(() => chrome.alarms.create('prompt-later:due', { when: Date.now() }));
+    await provider.waitForTimeout(500);
+    await expect(provider.locator('[data-message-author-role="user"]')).toHaveCount(1);
+    await provider.close();
+  });
+});
+
 test('R11 real MV3 alarm delivers after extension UI closes and deletion preserves activity', async () => {
   test.setTimeout(60000);
   await withExtension({}, async ({ page, context, worker, id }) => {
@@ -352,15 +460,32 @@ test('R11 real MV3 alarm delivers after extension UI closes and deletion preserv
     expect(delivered.jobs[0].status).toBe('completed');
     expect(delivered.jobs[0].enabled).toBe(false);
     expect(delivered.history.at(-1).status).toBe('sent');
-    dashboard.once('dialog', dialog => dialog.accept());
+    const completedStyle = await dashboard.locator('.job-status-completed').evaluate(node => {
+      const root = getComputedStyle(document.documentElement);
+      const probe = document.createElement('span');
+      probe.style.color = root.getPropertyValue('--success');
+      probe.style.backgroundColor = root.getPropertyValue('--success-soft');
+      document.body.append(probe);
+      const expected = getComputedStyle(probe);
+      const actual = getComputedStyle(node);
+      const result = { text: node.textContent, color: actual.color, background: actual.backgroundColor, expectedColor: expected.color, expectedBackground: expected.backgroundColor };
+      probe.remove();
+      return result;
+    });
+    expect(completedStyle.text).toBe('Submitted');
+    expect(completedStyle.color).toBe(completedStyle.expectedColor);
+    expect(completedStyle.background).toBe(completedStyle.expectedBackground);
     await dashboard.getByRole('button', { name: 'Delete' }).click();
+    await expect(dashboard.locator('#confirmation-dialog')).toBeVisible();
+    await dashboard.locator('#confirmation-accept').click();
     await dashboard.reload();
     await expect(dashboard.locator('#job-list')).not.toContainText(message);
     await dashboard.locator('[data-tab="activity"]').click();
     await expect(dashboard.locator('#activity-list')).toContainText('Sent');
     await expect(dashboard.locator('#clear-activity')).toBeVisible();
-    dashboard.once('dialog', dialog => dialog.accept());
     await dashboard.locator('#clear-activity').click();
+    await expect(dashboard.locator('#confirmation-dialog')).toBeVisible();
+    await dashboard.locator('#confirmation-accept').click();
     await expect(dashboard.locator('#activity-status')).toContainText('Activity cleared.');
     await expect(dashboard.locator('#activity-list')).toContainText('No activity yet.');
     await expect(dashboard.locator('#clear-activity')).toBeHidden();

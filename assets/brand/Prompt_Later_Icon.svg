@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+  <title>Prompt Later icon</title>
+  <desc>A violet chat bubble integrated with a white analog clock face.</desc>
+  <path fill="#6957ED" d="M480 85C278 85 115 248 115 450C115 652 278 815 480 815C553 815 621 794 678 758L850 872C872 887 899 868 891 843L809 659C832 606 845 547 845 450C845 248 682 85 480 85Z"/>
+  <circle cx="480" cy="450" r="270" fill="#FFFFFF"/>
+  <g stroke="#6957ED" stroke-width="56" stroke-linecap="round">
+    <path d="M480 450V284"/>
+    <path d="M480 450L659 347"/>
+  </g>
+  <circle cx="480" cy="450" r="34" fill="#6957ED"/>
+</svg>

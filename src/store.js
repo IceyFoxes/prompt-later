@@ -7,13 +7,24 @@ const JOB_STATUSES = new Set(['scheduled', 'paused', 'running', 'checking', 'dis
 const RUN_STATUSES = new Set(['checking', 'dispatching', 'sent', 'skipped', 'blocked', 'uncertain']);
 const FINAL_RUNS = new Set(['sent', 'skipped', 'blocked', 'uncertain']);
 
-// 'wait' postpones a run while the composer holds text; 'stop' asks for
-// attention immediately instead. Absent settings mean the default, so data saved
-// before this existed stays byte-identical on read.
-export const DRAFT_POLICIES = new Set(['wait', 'stop']);
-export const DEFAULT_DRAFT_POLICY = 'wait';
+// Existing 'wait' and 'stop' settings both preserve the draft and normalize to
+// the safe default. Recurring schedules now always continue after a blocked run.
+export const DRAFT_POLICIES = new Set(['skip', 'send-draft', 'send-both', 'send-scheduled']);
+export const DEFAULT_DRAFT_POLICY = 'skip';
+const LEGACY_DRAFT_POLICIES = new Set(['wait', 'stop']);
 
-export const draftPolicyOf = state => state?.settings?.draftPolicy || DEFAULT_DRAFT_POLICY;
+export const draftPolicyOf = state => {
+  const policy = state?.settings?.draftPolicy;
+  return DRAFT_POLICIES.has(policy) ? policy : DEFAULT_DRAFT_POLICY;
+};
+
+export function attentionCount(state) {
+  const affected = new Set(state.jobs.filter(job => job.status === 'needs-attention').map(job => job.id));
+  for (const run of state.history) {
+    if (run.status === 'uncertain') affected.add(run.jobId);
+  }
+  return affected.size;
+}
 
 export function validateDraftPolicy(value) {
   if (!DRAFT_POLICIES.has(value)) throw new Error('Choose how a draft in the composer should be handled.');
@@ -24,8 +35,9 @@ function validateSettings(settings) {
   if (settings === undefined) return undefined;
   if (!settings || typeof settings !== 'object' || Array.isArray(settings)) throw new Error('Prompt Later data has invalid settings.');
   if (Object.keys(settings).some(key => key !== 'draftPolicy')) throw new Error('Prompt Later data has unknown settings.');
-  if (!DRAFT_POLICIES.has(settings.draftPolicy)) throw new Error('Prompt Later data has an invalid draft policy.');
-  return { draftPolicy: settings.draftPolicy };
+  const draftPolicy = LEGACY_DRAFT_POLICIES.has(settings.draftPolicy) ? DEFAULT_DRAFT_POLICY : settings.draftPolicy;
+  if (!DRAFT_POLICIES.has(draftPolicy)) throw new Error('Prompt Later data has an invalid draft policy.');
+  return { draftPolicy };
 }
 
 export function emptyState() {

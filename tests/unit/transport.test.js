@@ -26,6 +26,55 @@ function expectResult(result, outcome) {
   assert.equal(result.outcome, outcome);
 }
 
+test('delivery sends the draft policy in prepare and commit and defaults to skip', async () => {
+  const { chromeApi } = api();
+  const messages = [];
+  chromeApi.tabs.sendMessage = async (tabId, message) => {
+    messages.push(message);
+    return message.type === 'PL_PREPARE' ? { ready: true, draft: true } : { outcome: 'sent' };
+  };
+  let marked = 0;
+  await createDelivery(chromeApi)(job, run, async () => { marked += 1; });
+  assert.equal(messages[0].draftPolicy, 'skip');
+  assert.equal(messages[1].draftPolicy, 'skip');
+  messages.length = 0;
+  await createDelivery(chromeApi)(job, run, async () => { marked += 1; }, 'send-both');
+  assert.equal(messages[0].draftPolicy, 'send-both');
+  assert.equal(messages[1].draftPolicy, 'send-both');
+  assert.equal(marked, 2);
+});
+
+test('send-both with a prepared draft leaves commit untimed and marks once', async () => {
+  const { chromeApi } = api();
+  let release;
+  let commitStarted = false;
+  const commitTimers = [];
+  const nativeSetTimeout = globalThis.setTimeout;
+  const messages = [];
+  chromeApi.tabs.sendMessage = async (tabId, message) => {
+    messages.push(message);
+    if (message.type === 'PL_PREPARE') return { ready: true, draft: true };
+    commitStarted = true;
+    return new Promise(resolve => { release = resolve; });
+  };
+  globalThis.setTimeout = (callback, timeout, ...args) => {
+    if (commitStarted) commitTimers.push(timeout);
+    return nativeSetTimeout(callback, timeout, ...args);
+  };
+  try {
+    let marked = 0;
+    const delivery = createDelivery(chromeApi)(job, run, async () => { marked += 1; }, 'send-both');
+    await new Promise(resolve => nativeSetTimeout(resolve, 25));
+    assert.equal(marked, 1);
+    assert.deepEqual(commitTimers, []);
+    release({ outcome: 'sent', detail: 'ack' });
+    assert.equal((await delivery).outcome, 'sent');
+    assert.equal(messages[1].type, 'PL_COMMIT');
+  } finally {
+    globalThis.setTimeout = nativeSetTimeout;
+  }
+});
+
 test('missing permission blocks without tab, injection, or mark calls', async () => {
   const { chromeApi, calls } = api({ permissions: { contains: async () => false } });
   let marked = false;

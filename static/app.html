@@ -12,9 +12,9 @@
   <main class="shell">
     <header class="topbar">
       <div class="brand">
-        <span class="brand-mark" aria-hidden="true"><span class="clock"></span></span>
+        <span class="brand-mark" aria-hidden="true"><img src="icons/icon32.png" alt=""></span>
         <span class="brand-copy"><strong>Prompt Later</strong><span>Messages, right on time</span></span>
-        <span class="badge"><span class="badge-dot" aria-hidden="true"></span>Local only</span>
+        <span class="badge"><span class="badge-dot" aria-hidden="true"></span>Stored locally</span>
       </div>
       <a id="dashboard-link" class="dashboard-link" href="app.html">Open dashboard <span aria-hidden="true">↗</span></a>
     </header>
@@ -42,6 +42,7 @@
           <button id="tab-send" role="tab" aria-controls="form-view" aria-selected="true" data-tab="send">Send later</button>
           <button id="tab-recurring" role="tab" aria-controls="form-view" aria-selected="false" data-tab="recurring">Recurring</button>
           <button id="tab-activity" role="tab" aria-controls="activity-view" aria-selected="false" data-tab="activity">Activity</button>
+          <button id="tab-info" role="tab" aria-controls="info-view" aria-selected="false" data-tab="info">Settings &amp; privacy</button>
         </nav>
 
         <div id="form-view" role="tabpanel" aria-labelledby="tab-send">
@@ -51,19 +52,19 @@
             <div class="field">
               <div class="label-row"><label for="url">Conversation</label><span id="provider-chip" class="chip provider-chip" hidden></span></div>
               <div class="inline url-control"><input id="url" name="url" type="url" required placeholder="Paste a conversation URL" autocomplete="off" aria-describedby="target-help"><button class="secondary current-tab" type="button" id="current-tab"><span class="target-icon" aria-hidden="true"></span>Use current tab</button></div>
-              <div id="target-help" class="hint">Works with an existing conversation on a supported AI provider.</div>
+              <div id="target-help" class="hint">ChatGPT and Claude are supported; additional providers are experimental.</div>
             </div>
 
             <div id="once-fields" class="schedule-fields">
-              <div class="field"><label for="when">Send time</label><select id="when"><option value="5h">In 5 hours</option><option value="1m">In 1 minute</option><option value="custom">Choose date &amp; time</option></select></div>
+              <div class="field"><label for="when">Send time</label><select id="when"><option value="5h">In 5 hours</option><option value="1m">In 1 minute (test)</option><option value="custom">Choose date &amp; time</option></select></div>
               <div class="field" id="custom-time-field" hidden><label for="custom-time">Date and time</label><input id="custom-time" type="datetime-local" aria-describedby="once-zone"><div id="once-zone" class="hint"></div></div>
               <p class="hint schedule-hint"><span aria-hidden="true">◷</span> The default is a five-hour delay, not quota-reset detection.</p>
             </div>
 
             <div id="recurring-fields" class="schedule-fields recurring-grid" hidden>
-              <div class="field"><label for="recurrence">Repeat</label><select id="recurrence"><option value="interval">Every N hours</option><option value="daily">Daily</option><option value="weekdays">Weekdays</option><option value="cron">Advanced cron</option></select></div>
-              <div class="field" id="interval-field"><label for="interval-hours">Every N hours</label><input id="interval-hours" type="number" min="1" step="1" value="5"></div>
-              <div class="field" id="recurring-time-field" hidden><label for="recurring-time">Time</label><input id="recurring-time" type="time" value="07:00"></div>
+              <div class="field"><label for="recurrence">Repeat</label><select id="recurrence"><option value="daily">Daily</option><option value="weekdays">Weekdays</option><option value="interval">Every N hours</option><option value="cron">Advanced cron</option></select></div>
+              <div class="field" id="interval-field" hidden><label for="interval-hours">Every N hours</label><input id="interval-hours" type="number" min="1" step="1" value="5"></div>
+              <div class="field" id="recurring-time-field"><label for="recurring-time">Time</label><input id="recurring-time" type="time" value="07:00"></div>
               <div class="field" id="cron-field" hidden><label for="cron">Five-field cron</label><input id="cron" type="text" value="0 7 * * 1-5" placeholder="0 7 * * 1-5" aria-describedby="cron-help"><div id="cron-help" class="hint">Use exactly five fields.</div></div>
               <div class="field timezone-field"><label for="timezone">Time zone</label><input id="timezone" list="zones" value="" placeholder="Europe/London"><datalist id="zones"></datalist></div>
               <div id="next-preview" class="preview" aria-live="polite"></div>
@@ -77,15 +78,46 @@
 
             <details class="options"><summary>Delivery options <span aria-hidden="true"></span></summary><div class="options-content"><div class="field"><label for="missed-policy">If the scheduled time is missed</label><select id="missed-policy"><option value="skip">Skip if more than 5 minutes late</option><option value="run-once">Send once when available</option></select></div></div></details>
             <div class="actions form-actions"><button class="primary" type="submit" id="save"><span class="button-clock" aria-hidden="true"></span><span id="save-label">Save scheduled message</span></button><button class="secondary" type="button" id="check">Check page</button><button class="secondary" type="button" id="cancel-edit" hidden>Cancel editing</button></div>
+            <p class="hint popup-awake-note"><span class="awake-dot" aria-hidden="true"></span><span>Keep the browser and computer awake.</span></p>
             <p class="hint permission-note"><span class="shield-icon" aria-hidden="true">✓</span> Access is limited to the chosen provider.</p>
             <p id="form-status" class="status" role="status"></p>
           </form>
         </div>
 
         <div id="activity-view" role="tabpanel" aria-labelledby="tab-activity" hidden>
-          <div class="view-heading activity-heading"><div><p class="eyebrow">Delivery log</p><h1 id="activity-title">Activity</h1><p>Sent means submitted, not completed.</p></div><button id="clear-activity" class="icon-button danger" type="button" aria-label="Clear activity" title="Clear activity"><span class="trash-icon" aria-hidden="true"></span></button></div>
+          <div class="view-heading activity-heading"><div><p class="eyebrow">Delivery log</p><h1 id="activity-title">Activity</h1><p>Sent means submitted, not completed.</p></div><button id="clear-activity" class="secondary danger" type="button">Clear All</button></div>
           <p id="activity-status" class="status" role="status"></p>
           <div id="activity-list" class="stack activity-list"></div>
+        </div>
+
+        <div id="info-view" role="tabpanel" aria-labelledby="tab-info" hidden>
+          <div class="view-heading"><div><p class="eyebrow">Settings and privacy</p><h1 id="info-title">Settings &amp; privacy</h1><p>Review delivery behavior and how Prompt Later protects your saved data.</p></div></div>
+          <details class="privacy info-section"><summary><span class="privacy-icon" aria-hidden="true">✓</span><span><strong>Private by default</strong><small>Encrypted on this device</small></span><span class="summary-chevron" aria-hidden="true"></span></summary><p>Schedules and activity are encrypted on this device. Messages use your signed-in provider; Prompt Later has no backend or telemetry.</p></details>
+          <details id="delivery-settings" class="privacy-settings info-section" hidden>
+            <summary><span class="settings-icon" aria-hidden="true"></span><span><strong>Delivery</strong><small>What to do if you are mid-draft</small></span><span class="summary-chevron" aria-hidden="true"></span></summary>
+            <div id="delivery-content">
+              <h3>Existing composer text</h3>
+              <p>Choose what Prompt Later should do when the composer already contains text.</p>
+              <div class="field">
+                <label for="draft-policy">If the composer is not empty</label>
+                <select id="draft-policy">
+                  <option value="send-draft">Send existing draft only</option>
+                  <option value="send-both">Send draft, then scheduled message</option>
+                  <option value="send-scheduled">Send scheduled message only</option>
+                  <option value="skip" selected>Do not send this occurrence</option>
+                </select>
+                <div id="draft-policy-hint" class="hint"></div>
+              </div>
+              <p id="delivery-status" class="status" role="status"></p>
+            </div>
+          </details>
+          <details id="privacy-settings" class="privacy-settings info-section" hidden>
+            <summary><span class="settings-icon" aria-hidden="true"></span><span><strong>Advanced privacy</strong><small>How saved data is protected</small></span><span class="summary-chevron" aria-hidden="true"></span></summary>
+            <div id="privacy-content">
+              <h3 id="privacy-title">Automatic device protection</h3>
+              <p id="privacy-description">Saved data is encrypted with a key held by this browser profile and resumes automatically after restarts.</p>
+            </div>
+          </details>
         </div>
       </section>
 
@@ -94,30 +126,6 @@
         <p class="queue-note"><span class="awake-dot" aria-hidden="true"></span><span>Keep the browser and computer awake.</span></p>
         <div id="job-list" class="stack"></div>
         <button id="job-list-toggle" class="list-toggle" type="button" hidden></button>
-        <details class="privacy"><summary><span class="privacy-icon" aria-hidden="true">✓</span><span><strong>Private by default</strong><small>Encrypted on this device</small></span><span class="summary-chevron" aria-hidden="true"></span></summary><p>Schedules and activity are encrypted on this device. Messages use your signed-in provider; Prompt Later has no backend or telemetry.</p></details>
-        <details id="delivery-settings" class="privacy-settings" hidden>
-          <summary><span class="settings-icon" aria-hidden="true"></span><span><strong>Delivery</strong><small>What to do if you are mid-draft</small></span><span class="summary-chevron" aria-hidden="true"></span></summary>
-          <div id="delivery-content">
-            <h3>Existing composer text</h3>
-            <p>Prompt Later never changes text already in the composer.</p>
-            <div class="field">
-              <label for="draft-policy">If the composer is not empty</label>
-              <select id="draft-policy">
-                <option value="wait">Keep recurring schedule active</option>
-                <option value="stop">Stop and tell me</option>
-              </select>
-              <div id="draft-policy-hint" class="hint"></div>
-            </div>
-            <p id="delivery-status" class="status" role="status"></p>
-          </div>
-        </details>
-        <details id="privacy-settings" class="privacy-settings" hidden>
-          <summary><span class="settings-icon" aria-hidden="true"></span><span><strong>Advanced privacy</strong><small>How saved data is protected</small></span><span class="summary-chevron" aria-hidden="true"></span></summary>
-          <div id="privacy-content">
-            <h3 id="privacy-title">Automatic device protection</h3>
-            <p id="privacy-description">Saved data is encrypted with a key held by this browser profile and resumes automatically after restarts. This does not protect against someone who controls the browser profile.</p>
-          </div>
-        </details>
       </aside>
     </section>
 
@@ -128,6 +136,18 @@
         <h2 id="current-tab-dialog-title">Open a conversation first</h2>
         <p id="current-tab-dialog-description">Start or open a conversation so it has its own conversation URL, then try again.</p>
         <button class="primary dialog-action" type="submit">Got it</button>
+      </form>
+    </dialog>
+    <dialog id="confirmation-dialog" class="app-dialog confirmation-dialog" aria-labelledby="confirmation-title" aria-describedby="confirmation-description">
+      <form method="dialog">
+        <button class="dialog-close" type="submit" value="cancel" aria-label="Close">×</button>
+        <span class="dialog-icon danger-dialog-icon" aria-hidden="true">!</span>
+        <h2 id="confirmation-title"></h2>
+        <p id="confirmation-description"></p>
+        <div class="dialog-actions">
+          <button class="secondary" type="submit" value="cancel">Cancel</button>
+          <button id="confirmation-accept" class="primary danger-primary" type="submit" value="confirm"></button>
+        </div>
       </form>
     </dialog>
   </main>

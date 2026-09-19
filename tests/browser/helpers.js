@@ -36,6 +36,9 @@ export function fixtureFor(host, options = {}) {
   const busyScript = options.busyOnInput
     ? "const stop = document.createElement('button'); stop.setAttribute('aria-label', 'Stop generating'); document.body.append(stop);"
     : '';
+  const busyAfterFirstClickScript = Number(options.busyAfterFirstClickMs) > 0
+    ? `window.__fixtureSendClicks = (window.__fixtureSendClicks || 0) + 1; if (window.__fixtureSendClicks === 1) { const stop = document.createElement('button'); stop.setAttribute('aria-label', 'Stop generating'); document.body.append(stop); setTimeout(() => stop.remove(), ${Number(options.busyAfterFirstClickMs)}); }`
+    : '';
   const attachmentScript = options.pendingAttachmentOnInput
     ? "const attachment = document.createElement('button'); attachment.setAttribute('aria-label', 'Remove attachment'); document.querySelector('main').append(attachment);"
     : '';
@@ -64,6 +67,7 @@ export function fixtureFor(host, options = {}) {
       ${ackScript}
       ${clearScript}
       if (editor) editor.dispatchEvent(new Event('input', { bubbles: true }));
+      ${busyAfterFirstClickScript}
       ${alertScript}
     }));
   `;
@@ -92,6 +96,7 @@ export function fixtureFor(host, options = {}) {
         if (button) button.addEventListener('click', () => {
           ${ackScript}
           ${clearScript}
+          ${busyAfterFirstClickScript}
           stateText = read();
           sync();
           ${alertScript}

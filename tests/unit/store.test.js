@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createMemoryStore, emptyState, validateState } from '../../src/store.js';
+import { attentionCount, createMemoryStore, emptyState, validateState } from '../../src/store.js';
 import { Scheduler } from '../../src/scheduler.js';
 
 const target = 'https://chatgpt.com/c/id';
@@ -24,6 +24,39 @@ function historical(status = 'sent') {
     detail: '',
   };
 }
+
+test('attention count deduplicates affected jobs and ignores non-attention runs', () => {
+  assert.equal(attentionCount({ jobs: [], history: [] }), 0);
+  assert.equal(attentionCount({
+    jobs: [{ id: 'recurring', status: 'scheduled' }],
+    history: [
+      { jobId: 'recurring', status: 'uncertain' },
+      { jobId: 'recurring', status: 'uncertain' },
+    ],
+  }), 1);
+  assert.equal(attentionCount({
+    jobs: [{ id: 'needs', status: 'needs-attention' }],
+    history: [{ jobId: 'uncertain', status: 'uncertain' }],
+  }), 2);
+  assert.equal(attentionCount({
+    jobs: [{ id: 'blocked', status: 'scheduled' }],
+    history: [
+      { jobId: 'blocked', status: 'blocked' },
+      { jobId: 'blocked', status: 'skipped' },
+      { jobId: 'blocked', status: 'sent' },
+    ],
+  }), 0);
+});
+
+test('draft policies validate and legacy settings normalize to skip', () => {
+  for (const draftPolicy of ['skip', 'send-draft', 'send-both', 'send-scheduled']) {
+    assert.deepEqual(validateState({ version: 1, jobs: [], history: [], settings: { draftPolicy } }).settings, { draftPolicy });
+  }
+  for (const legacy of ['wait', 'stop']) {
+    assert.deepEqual(validateState({ version: 1, jobs: [], history: [], settings: { draftPolicy: legacy } }).settings, { draftPolicy: 'skip' });
+  }
+  assert.throws(() => validateState({ version: 1, jobs: [], history: [], settings: { draftPolicy: 'unknown' } }));
+});
 
 test('invalid URL is rejected without persisted mutation', async () => {
   const store = createMemoryStore();

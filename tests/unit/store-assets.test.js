@@ -8,6 +8,7 @@ import { validateState } from '../../src/store.js';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const store = path.join(root, 'store');
 const listing = JSON.parse(fs.readFileSync(path.join(store, 'listing.json'), 'utf8'));
+const manifest = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'));
 const escape = value => String(value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
 
 test('generated store pages preserve approved source text without external executable content', () => {
@@ -34,8 +35,13 @@ test('store disclosures describe automatic device encryption without weakening r
   assert(['draft', 'ready'].includes(listing.status));
   assert(['draft', 'ready'].includes(listing.privacyStatus));
   assert.equal(listing.visibility, 'unlisted');
+  assert.equal(listing.title, manifest.name);
+  assert.equal(manifest.short_name, 'Prompt Later');
   assert.match(listing.description, /No passphrase is required/);
   assert.match(listing.description, /Advanced privacy in the full dashboard/);
+  assert.doesNotMatch(listing.description, /unless you choose to stop them/);
+  assert.match(listing.description, /safe default preserves it and skips that occurrence/);
+  assert.match(listing.permissionJustifications.scripting, /selected existing-draft behavior/);
   assert.match(listing.permissionJustifications.storage, /non-exportable.*IndexedDB/);
   const policy = listing.privacySections.flatMap(section => section.paragraphs).join('\n');
   assert.match(policy, /not hardware-backed/);
@@ -57,6 +63,17 @@ test('store images have the required PNG dimensions', () => {
     assert.equal(image.readUInt32BE(16), width, name);
     assert.equal(image.readUInt32BE(20), height, name);
   }
+  for (const [size, name] of [[16, 'icon16.png'], [32, 'icon32.png'], [48, 'icon48.png'], [128, 'icon128.png']]) {
+    const image = fs.readFileSync(path.join(root, 'assets/brand', name));
+    assert.equal(image.subarray(0, 8).toString('hex'), '89504e470d0a1a0a', name);
+    assert.equal(image.readUInt32BE(16), size, name);
+    assert.equal(image.readUInt32BE(20), size, name);
+    assert.equal(image[25], 6, `${name} must use RGBA color type 6`);
+  }
+  assert.deepEqual(
+    fs.readFileSync(path.join(store, 'images/icon128.png')),
+    fs.readFileSync(path.join(root, 'assets/brand/icon128.png')),
+  );
 });
 
 test('frozen demo schedules are valid synthetic data with no unlock material', () => {

@@ -56,10 +56,12 @@ test('fresh installation schedules immediately with non-exportable device encryp
   });
 });
 
-test('fresh popup can save and never displays advanced settings or password controls', async () => {
+test('fresh popup can save and displays Settings & privacy without password controls', async () => {
   await withExtension({ path: 'app.html?popup=1' }, async ({ page }) => {
-    await expect(page.locator('#privacy-settings')).toBeHidden();
+    await page.locator('[data-tab="info"]').click();
+    await expect(page.locator('#privacy-settings')).toBeVisible();
     await expect(page.locator('input[type="password"]:visible')).toHaveCount(0);
+    await page.locator('[data-tab="send"]').click();
     await saveJob(page, 'Fresh popup fixture');
     expect((await readState(page)).jobs[0].message).toBe('Fresh popup fixture');
   });

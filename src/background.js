@@ -1,5 +1,6 @@
 import { Scheduler } from './scheduler.js';
 import { createVaultStore } from './vault.js';
+import { attentionCount } from './store.js';
 import { createDelivery, inspectTarget } from './transport.js';
 import { isUiSender, UI_MESSAGE } from './protocol.js';
 import { parseTarget } from './targets.js';
@@ -39,6 +40,23 @@ function fail(sendResponse, error) {
 function reportError() {
   console.error('Prompt Later background error.');
   Promise.resolve(api?.action?.setBadgeText?.({ text: '!' })).catch(() => {});
+}
+
+async function refreshBadge(state) {
+  state ||= await scheduler.getState();
+  const count = attentionCount(state);
+  await api.action.setBadgeBackgroundColor({ color: '#b42318' });
+  await api.action.setBadgeText({ text: count ? count > 9 ? '9+' : String(count) : '' });
+}
+
+async function mutateAndReply(sendResponse, mutation) {
+  const result = await mutation();
+  try {
+    await refreshBadge();
+  } catch (error) {
+    reportError(error);
+  }
+  return reply(sendResponse, result);
 }
 
 const storageReady = scheduler ? accessLevel() : Promise.resolve();
@@ -107,19 +125,22 @@ if (api) {
       if (message.action === 'UPSERT_JOB') {
         const target = parseTarget(payload.url);
         if (!(await permissionGranted(target))) throw new Error('Allow access to this provider before saving.');
-        return reply(sendResponse, await scheduler.upsertJob(payload));
+        return mutateAndReply(sendResponse, () => scheduler.upsertJob(payload));
       }
       if (message.action === 'SET_ENABLED') {
-        return reply(sendResponse, await scheduler.setEnabled(payload.id, payload.enabled));
+        return mutateAndReply(sendResponse, () => scheduler.setEnabled(payload.id, payload.enabled));
       }
       if (message.action === 'DELETE_JOB') {
-        return reply(sendResponse, await scheduler.deleteJob(payload.id));
+        return mutateAndReply(sendResponse, () => scheduler.deleteJob(payload.id));
       }
       if (message.action === 'CLEAR_ACTIVITY') {
-        return reply(sendResponse, await scheduler.clearActivity());
+        return mutateAndReply(sendResponse, () => scheduler.clearActivity());
+      }
+      if (message.action === 'DELETE_ACTIVITY') {
+        return mutateAndReply(sendResponse, () => scheduler.deleteActivity(payload.id));
       }
       if (message.action === 'UPDATE_SETTINGS') {
-        return reply(sendResponse, await scheduler.updateSettings(payload));
+        return mutateAndReply(sendResponse, () => scheduler.updateSettings(payload));
       }
       throw new Error('Unknown request.');
     })().catch(error => fail(sendResponse, error));
@@ -134,7 +155,7 @@ if (api) {
     await activeScheduler();
     await scheduler.tick();
     await api.alarms.clear(RECOVERY_ALARM);
-    await api.action.setBadgeText({ text: '' });
+    await refreshBadge().catch(reportError);
   }).catch(() => tickError(allowRecovery));
   ready.then(() => runTick(true)).catch(() => tickError(true));
   api.alarms.onAlarm.addListener(alarm => {

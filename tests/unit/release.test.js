@@ -6,7 +6,7 @@ import { compareVersions, validateReleaseMetadata, versionParts } from '../../sc
 import { submitRelease, validateSubmission } from '../../scripts/submit-release.mjs';
 
 const version = '0.3.0';
-const manifest = { name: 'Prompt Later', version, manifest_version: 3, minimum_chrome_version: '120', permissions: ['storage', 'alarms', 'activeTab', 'scripting'], optional_host_permissions: optionalHostPermissions(), content_security_policy: { extension_pages: "script-src 'self'; object-src 'none'" } };
+const manifest = { name: 'Prompt Later — AI Chat Scheduler', short_name: 'Prompt Later', version, manifest_version: 3, minimum_chrome_version: '120', permissions: ['storage', 'alarms', 'activeTab', 'scripting'], optional_host_permissions: optionalHostPermissions(), content_security_policy: { extension_pages: "script-src 'self'; object-src 'none'" } };
 const pkg = { version };
 const lock = { version, packages: { '': { version } } };
 const archive = Buffer.from('Synthetic package bytes; all store requests are mocked.');
@@ -52,7 +52,9 @@ test('release versions, tags, and optional permissions are checked without chang
   for (const invalid of ['1.0.0-beta', '01.2.3', '1.2.3.4.5', '65536.0', '-1.0', '1e2.0']) assert.throws(() => versionParts(invalid));
   for (const [modified, packageValue, lockValue, tag] of [
     [manifest, { version: '0.2.0' }, lock, 'v0.3.0'], [manifest, pkg, { ...lock, version: '0.2.0' }, 'v0.3.0'],
-    [manifest, pkg, lock, 'v0.3.1'], [{ ...manifest, host_permissions: ['<all_urls>'] }, pkg, lock, 'v0.3.0'],
+    [manifest, pkg, lock, 'v0.3.1'], [{ ...manifest, name: 'Prompt Later' }, pkg, lock, 'v0.3.0'],
+    [{ ...manifest, short_name: 'Prompt Later Scheduler' }, pkg, lock, 'v0.3.0'],
+    [{ ...manifest, host_permissions: ['<all_urls>'] }, pkg, lock, 'v0.3.0'],
     [{ ...manifest, permissions: [...manifest.permissions, 'tabs'] }, pkg, lock, 'v0.3.0'],
     [{ ...manifest, optional_host_permissions: [] }, pkg, lock, 'v0.3.0'],
     [{ ...manifest, externally_connectable: { matches: ['https://example.test/*'] } }, pkg, lock, 'v0.3.0'],

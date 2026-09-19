@@ -21,7 +21,7 @@ const policyPage = document('Prompt Later privacy policy', policy, policyDraft);
 if (!policyDraft && (typeof listing.supportEmail !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(listing.supportEmail))) throw new Error('A public support email is required before publishing the policy.');
 fs.writeFileSync(path.join(directory, 'privacy.html'), policyPage);
 const details = `<h1>${escape(listing.title)}</h1><p class="muted">${escape(listing.price)} · ${escape(listing.visibility)} beta draft</p><h2>Store description</h2><p class="description">${escape(listing.description)}</p><h2>Single purpose</h2><p>${escape(listing.singlePurpose)}</p><h2>Permission justifications</h2><dl>${Object.entries(listing.permissionJustifications).map(([key, value]) => `<dt>${escape(key)}</dt><dd>${escape(value)}</dd>`).join('')}</dl><h2>Remote code</h2><p>${escape(listing.remoteCode)}</p><h2>Reviewer instructions</h2><ol>${listing.testInstructions.map(instruction => `<li>${escape(instruction)}</li>`).join('')}</ol><h2>Privacy</h2><p><a href="privacy.html">Read the privacy-policy draft</a></p>${contact}`;
-fs.writeFileSync(path.join(directory, 'index.html'), document('Prompt Later store draft', details));
+fs.writeFileSync(path.join(directory, 'index.html'), document(`${listing.title} store draft`, details));
 if (process.argv.includes('--policy-site')) {
   if (policyDraft) throw new Error('Approve the privacy policy before exporting the public site.');
   const site = path.join(root, 'artifacts/prompt-later-site');
@@ -32,7 +32,7 @@ if (process.argv.includes('--policy-site')) {
 }
 if (process.argv.includes('--pages-only')) process.exit(0);
 fs.mkdirSync(images, { recursive: true });
-fs.copyFileSync(path.join(root, 'dist/icons/icon128.png'), path.join(images, 'icon128.png'));
+fs.copyFileSync(path.join(root, 'assets/brand/icon128.png'), path.join(images, 'icon128.png'));
 
 const samplePath = path.join(directory, 'demo-state.json');
 let capture;
@@ -78,6 +78,7 @@ try {
   await page.locator('#message').fill(weekdays.message);
   await page.locator('#job-list').getByText(weekdays.message, { exact: true }).waitFor();
   await page.screenshot({ path: path.join(images, 'recurring.png') });
+  await page.locator('[data-tab="info"]').click();
   await page.locator('#privacy-settings > summary').click();
   await page.locator('#privacy-title').getByText('Automatic device protection', { exact: true }).waitFor();
   await page.locator('#privacy-settings').scrollIntoViewIfNeeded();

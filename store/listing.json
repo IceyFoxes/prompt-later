@@ -1,8 +1,8 @@
 {
-  "status": "draft",
+  "status": "ready",
   "privacyStatus": "ready",
   "visibility": "unlisted",
-  "title": "Prompt Later",
+  "title": "Prompt Later — AI Chat Scheduler",
   "shortDescription": "Schedule messages in your existing AI chats. Local storage, one-off sends, and recurring schedules.",
   "category": "Productivity",
   "language": "en",
@@ -10,19 +10,19 @@
   "supportEmail": "promptlater.support@gmail.com",
   "privacyUrl": "https://iceyfoxes.github.io/prompt-later-site/privacy.html",
   "singlePurpose": "Schedule user-written text messages for delivery to specific existing conversations on supported AI chat websites.",
-  "description": "Send later for your AI chats.\n\nChoose an existing conversation, a time, and a message. Prompt Later attempts to send your message to that saved conversation while your browser is running and your computer is awake.\n\nFEATURES\n- Capture the current conversation URL or paste one.\n- Schedule once: in five hours, in one minute for testing, or at a chosen date and time.\n- Repeat every N hours, daily, on weekdays, or using a five-field cron expression and time zone.\n- Save multiple messages, edit schedules, pause jobs, and review delivery activity.\n- Reuse the matching conversation tab or open it in the background without switching your active tab.\n- Preserve existing drafts and block sending when the page is busy or controls are ambiguous.\n- Never repeat a one-off after sending may have started. If the browser interrupts an attempt before that boundary, Prompt Later may safely resume it and still applies the chosen late-run policy. Recurring schedules continue with their next occurrence unless you choose to stop them when a draft is present.\n\nLOCAL ENCRYPTION, NO EXTRA SIGN-IN\nSaved messages, conversation URLs, schedules, and activity are automatically encrypted locally with AES-256-GCM using a browser-held non-exportable device key. No passphrase is required and there is nothing to unlock, so schedules resume by themselves after browser restarts and extension updates. Someone controlling the browser or profile may still access the data. You can review how this works under Advanced privacy in the full dashboard.\n\nNo extra account, extension backend, telemetry, or AI API key is required. Messages are delivered through the provider website using your existing signed-in account. The provider processes messages under its own terms and privacy policy.\n\nBETA COMPATIBILITY\nIntegrations are included for ChatGPT and Claude. Devin, Gemini, DeepSeek, Kimi, Perplexity, Microsoft Copilot, Qwen, and Mistral Le Chat are experimental. Automated tests use simulated provider pages; they do not guarantee live compatibility. Website changes, login state, and account limits can prevent delivery.\n\nIMPORTANT LIMITS\nKeep the browser running and the computer awake. Turning off the monitor is fine. Alarms can be delayed and cannot wake the computer. The five-hour option is a convenience delay, not quota-reset detection. Prompt Later does not bypass account limits or guarantee that an AI will finish its work. Sent means that the page acknowledged the message, not that the response is complete.\n\nPrompt Later is an independent utility and is not affiliated with the supported AI providers.",
+  "description": "Send later for your AI chats.\n\nChoose an existing conversation, a time, and a message. Prompt Later attempts to send your message to that saved conversation while your browser is running and your computer is awake.\n\nFEATURES\n- Capture the current conversation URL or paste one.\n- See attention counts on the toolbar when delivery needs review.\n- Schedule once: in five hours, in one minute for testing, or at a chosen date and time.\n- Repeat every N hours, daily, on weekdays, or using a five-field cron expression and time zone.\n- Save multiple messages, edit schedules, pause jobs, and review delivery activity.\n- Reuse the matching conversation tab or open it in the background without switching your active tab.\n- Choose whether an existing composer draft is preserved, sent, or replaced; the safe default preserves it and skips that occurrence.\n- Never repeat a one-off after sending may have started. If the browser interrupts an attempt before that boundary, Prompt Later may safely resume it and still applies the chosen late-run policy. Recurring schedules continue with their next occurrence after a blocked, skipped, or uncertain run.\n\nLOCAL ENCRYPTION, NO EXTRA SIGN-IN\nSaved messages, conversation URLs, schedules, and activity are automatically encrypted locally with AES-256-GCM using a browser-held non-exportable device key. No passphrase is required and there is nothing to unlock, so schedules resume by themselves after browser restarts and extension updates. Someone controlling the browser or profile may still access the data. You can review how this works under Advanced privacy in the full dashboard.\n\nNo extra account, extension backend, telemetry, or AI API key is required. Messages are delivered through the provider website using your existing signed-in account. The provider processes messages under its own terms and privacy policy.\n\nBETA COMPATIBILITY\nIntegrations are included for ChatGPT and Claude. Devin, Gemini, DeepSeek, Kimi, Perplexity, Microsoft Copilot, Qwen, and Mistral Le Chat are experimental. Automated tests use simulated provider pages; they do not guarantee live compatibility. Website changes, login state, and account limits can prevent delivery.\n\nIMPORTANT LIMITS\nKeep the browser running and the computer awake. Turning off the monitor is fine. Alarms can be delayed and cannot wake the computer. The five-hour option is a convenience delay, not quota-reset detection. Prompt Later does not bypass account limits or guarantee that an AI will finish its work. Sent means that the page acknowledged the message, not that the response is complete.\n\nPrompt Later is an independent utility and is not affiliated with the supported AI providers.",
   "permissionJustifications": {
     "storage": "Store encrypted schedules, target URLs, messages, and activity locally. A non-exportable AES-256-GCM CryptoKey is kept in extension-origin IndexedDB for automatic device protection. Local and session extension storage are restricted to trusted extension contexts.",
     "alarms": "Wake the background service worker to check the next scheduled delivery while the browser is running. Chrome's alarm system holds the next wake-up time.",
     "activeTab": "Read the current tab URL when the user opens the extension or chooses Use current tab, so they can select that conversation without pasting its URL.",
-    "scripting": "Inject packaged delivery code into the exact saved conversation after site access is granted. Check the composer, preserve drafts, insert the configured text, activate the explicit send control, and confirm acknowledgement. All injected code runs in an isolated world and is bundled in the package.",
+    "scripting": "Inject packaged delivery code into the exact saved conversation after site access is granted. Inspect the composer, apply the selected existing-draft behavior, insert configured text when required, activate explicit send controls, and confirm acknowledgement. All injected code runs in an isolated world and is bundled in the package.",
     "optional_host_permissions": "Request access only to a provider site chosen by the user. Use granted access to locate the matching conversation tab, open that exact saved URL if necessary, and perform guarded delivery. Access is optional and is not requested for unrelated websites."
   },
   "remoteCode": "All extension logic is packaged locally. It interacts with existing provider pages; it does not fetch or evaluate executable code from a server.",
   "privacyDisclosuresForReview": [
     {
       "category": "Personal communications",
-      "use": "Only user-configured scheduled messages are stored and sent as part of the requested feature. They may contain personal communications. The extension does not store conversation transcripts or model responses."
+      "use": "User-configured scheduled messages are stored and sent as part of the requested feature and may contain personal communications. If you select a draft-sending behavior, existing composer text is submitted directly to the provider but is not stored by Prompt Later. The extension does not store conversation transcripts or model responses."
     },
     {
       "category": "Web history",
@@ -30,16 +30,16 @@
     },
     {
       "category": "Website content",
-      "use": "Inspect the target conversation's composer, draft/busy/error states, and matching user-message elements to deliver safely and detect acknowledgement. This is transient page inspection, not transcript storage or export."
+      "use": "Inspect the target conversation's composer, draft/busy/error states, and matching user-message elements to apply the selected draft behavior, deliver safely, and detect acknowledgement. This is transient page inspection, not transcript storage or export."
     }
   ],
   "testInstructions": [
     "Install the beta into a separate test browser profile. The scheduler opens immediately with no passphrase and no onboarding. No Prompt Later account or API key is required; automatic local device encryption is configured on first use.",
     "Sign in to a supported AI website with a disposable test account or a reviewer-controlled account. Open an existing disposable ChatGPT conversation, finish any response, and leave its composer empty.",
     "Open Prompt Later, use the current tab or paste that conversation URL, and grant access only to that site. Check page should inspect readiness without typing or sending.",
-    "Choose In 1 minute and enter: This is a Prompt Later beta test. Reply with OK. Save, close the popup, and switch to another tab while leaving the browser running.",
+    "Choose In 1 minute (test) and enter: This is a Prompt Later beta test. Reply with OK. Save, close the popup, and switch to another tab while leaving the browser running.",
     "The scheduled message should appear once in the saved conversation. Activity should record Sent only after page acknowledgement. Inspect any blocked or uncertain explanation instead of scheduling duplicates.",
-    "For draft protection, schedule another message and type an unsent draft in the target chat before it is due. The draft must remain untouched. A one-off job should need attention; a recurring job should keep its next occurrence scheduled unless Stop and tell me is selected.",
+    "For the default draft protection behavior, schedule another message and type an unsent draft in the target chat before it is due. The draft must remain untouched. A one-off job should need attention and a recurring job should keep its next occurrence scheduled. Delivery settings also offer explicit choices to send or replace a draft; test those choices only with disposable text.",
     "Experimental integrations are not a claim of live compatibility. No provider credentials are included in this draft; use only reviewer-controlled accounts."
   ],
   "privacySections": [
@@ -54,7 +54,7 @@
       "heading": "Data handled by the extension",
       "paragraphs": [
         "The extension handles the messages you enter, selected conversation URLs and provider names, scheduling and time-zone settings, job identifiers and statuses, and activity records. Activity can include a message preview of up to 160 characters, the target URL, timestamps, and a delivery explanation.",
-        "With your permission, it reads a selected tab URL and matching provider-tab URLs. It inspects the saved conversation page to find the composer, check drafts and busy/error states, insert your scheduled text, and determine whether a matching user message appeared. This page inspection is transient; Prompt Later does not store or export conversation transcripts or AI responses, or collect general browsing history.",
+        "With your permission, it reads a selected tab URL and matching provider-tab URLs. It inspects the saved conversation page to find the composer and check draft, busy, and error states. Depending on the delivery setting you choose, it preserves, submits, or replaces existing composer text; it inserts scheduled text when required and determines whether matching user messages appeared. This page inspection is transient; Prompt Later does not store or export conversation transcripts or AI responses, or collect general browsing history.",
         "The extension does not store account passwords and does not read provider account passwords, authentication cookies, or API keys."
       ]
     },
@@ -88,7 +88,7 @@
     {
       "heading": "Your controls and important limits",
       "paragraphs": [
-        "You choose the conversation, text, time, recurrence, time zone, and late-run policy. You can edit, pause, or delete saved jobs and revoke site access through Chrome. Revoked access or unavailable encrypted storage blocks new scheduled delivery attempts. A send already underway may complete; running jobs cannot be edited, paused, or deleted.",
+        "You choose the conversation, text, time, recurrence, time zone, late-run policy, and how existing composer drafts are handled. You can edit, pause, or delete saved jobs and revoke site access through Chrome. Revoked access or unavailable encrypted storage blocks new scheduled delivery attempts. A send already underway may complete; running jobs cannot be edited, paused, or deleted.",
         "Keep the computer awake, the browser running, and the target provider signed in. Scheduled times can be delayed. Automatic restart recovery resumes schedules and applies each job's late policy, so overdue messages may send immediately.",
         "Saved data is encrypted automatically and there is no passphrase to set or remember. Removing the extension deletes its saved data, including the device key."
       ]

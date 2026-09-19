@@ -31,6 +31,7 @@ async function findTab(chromeApi, target) {
 }
 
 async function callPage(chromeApi, tabId, message, timeout = 20000) {
+  if (timeout === null) return chromeApi.tabs.sendMessage(tabId, message);
   let timer;
   try {
     return await Promise.race([
@@ -60,7 +61,7 @@ async function pageForTarget(chromeApi, target, { openIfMissing = true } = {}) {
 }
 
 export function createDelivery(chromeApi) {
-  return async function deliver(job, run, markDispatching) {
+  return async function deliver(job, run, markDispatching, draftPolicy = 'skip') {
     const target = parseTarget(job.url);
     if (!(await hasPermission(chromeApi, target.origin))) {
       return { outcome: 'blocked', detail: 'Allow access to this provider before sending.', reason: REASONS.PERMISSION_MISSING };
@@ -72,6 +73,7 @@ export function createDelivery(chromeApi) {
       runId: run.id,
       url: target.url,
       message: job.message,
+      draftPolicy,
     });
     if (!prepared?.ready) {
       return result('blocked', prepared?.detail || 'The page is not ready to receive this message.', prepared?.reason);
@@ -86,7 +88,8 @@ export function createDelivery(chromeApi) {
         runId: run.id,
         url: target.url,
         message: job.message,
-      });
+        draftPolicy,
+      }, prepared?.draft === true && draftPolicy === 'send-both' ? null : 20000);
       if (committed?.outcome === 'sent') {
         return { outcome: 'sent', detail: committed.detail || 'The site acknowledged submission.' };
       }

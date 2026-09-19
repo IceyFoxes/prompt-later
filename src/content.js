@@ -3,6 +3,8 @@ import { REASONS, withReason } from './outcomes.js';
 import { parseTarget, sameTarget } from './targets.js';
 
 const SELECTORS = Object.fromEntries(Object.entries(PROVIDERS).map(([id, config]) => [id, config.selectors]));
+const DRAFT_POLICIES = new Set(['skip', 'send-draft', 'send-both', 'send-scheduled']);
+const SEND_BOTH_IDLE_LIMIT = 10 * 60 * 1000;
 const state = globalThis.__promptLaterState ||= {
   reservations: new Map(),
   commits: new Map(),
@@ -61,7 +63,13 @@ function editor(provider) {
   throw withReason('Composer was not found.', REASONS.COMPOSER_MISSING, { code: 'COMPOSER_NOT_FOUND' });
 }
 
-async function waitForComposer(provider, url) {
+function validDraftPolicy(draftPolicy) {
+  if (!DRAFT_POLICIES.has(draftPolicy)) throw withReason('Unknown draft policy.', REASONS.PAGE_RACE);
+  return draftPolicy;
+}
+
+async function waitForComposer(provider, url, draftPolicy = 'skip') {
+  validDraftPolicy(draftPolicy);
   const deadline = Date.now() + 15000;
   let candidate = null;
   let stableSince = 0;
@@ -71,7 +79,9 @@ async function waitForComposer(provider, url) {
     try { composer = editor(provider); } catch (error) {
       if (error.code !== 'COMPOSER_NOT_FOUND') throw error;
     }
-    if (composer && hasText(composer)) throw withReason('The composer already contains a draft; it was left untouched.', REASONS.DRAFT);
+    if (composer && hasText(composer) && draftPolicy === 'skip') {
+      throw withReason('The composer already contains a draft; it was left untouched.', REASONS.DRAFT);
+    }
     if (composer && attachments(provider, composer)) throw withReason('Pending attachments must be removed before sending.', REASONS.ATTACHMENTS);
     if (busy(provider)) throw withReason('The provider is still generating a response.', REASONS.BUSY);
     const error = alertState();
@@ -243,7 +253,8 @@ function inspection(provider) {
   };
 }
 
-function preflight(provider, message, runId, url) {
+function preflight(provider, message, runId, url, draftPolicy = 'skip') {
+  validDraftPolicy(draftPolicy);
   const now = Date.now();
   for (const [id, reservation] of state.reservations) {
     if (reservation.expires < now) state.reservations.delete(id);
@@ -251,13 +262,16 @@ function preflight(provider, message, runId, url) {
   if (state.commits.has(runId)) return { ready: false, detail: 'This run is already being handled.', reason: REASONS.RESERVATION_STALE };
   const previous = state.reservations.get(runId);
   if (previous) {
-    if (previous.provider !== provider || previous.message !== message || !sameTarget(previous.url, url)) {
+    if (previous.provider !== provider || previous.message !== message || previous.draftPolicy !== draftPolicy || !sameTarget(previous.url, url)) {
       throw withReason('This run reservation no longer matches.', REASONS.RESERVATION_STALE);
     }
-    return { ready: true, detail: 'Composer is ready.' };
+    return { ready: true, detail: 'Composer is ready.', draft: previous.draft !== null };
   }
   const composer = editor(provider);
-  if (hasText(composer)) throw withReason('The composer already contains a draft; it was left untouched.', REASONS.DRAFT);
+  const draft = hasText(composer) ? textOf(composer) : null;
+  if (draft !== null && draftPolicy === 'skip') {
+    throw withReason('The composer already contains a draft; it was left untouched.', REASONS.DRAFT);
+  }
   if (attachments(provider, composer)) throw withReason('Pending attachments must be removed before sending.', REASONS.ATTACHMENTS);
   if (busy(provider)) throw withReason('The provider is still generating a response.', REASONS.BUSY);
   const error = alertState();
@@ -270,13 +284,16 @@ function preflight(provider, message, runId, url) {
     provider,
     url: target.url,
     message,
+    draftPolicy,
+    draft,
     baseline: matchingUsers(provider, message).length,
+    draftBaseline: draft === null ? null : matchingUsers(provider, draft).length,
     expires: Date.now() + 30000,
   });
-  return { ready: true, detail: 'Composer is ready.' };
+  return { ready: true, detail: 'Composer is ready.', draft: draft !== null };
 }
 
-function insert(composer, message) {
+function insert(composer, message, replace = false) {
   composer.focus();
   if (composer instanceof HTMLTextAreaElement || composer instanceof HTMLInputElement) {
     const setter = Object.getOwnPropertyDescriptor(composer.constructor.prototype, 'value')?.set
@@ -289,7 +306,7 @@ function insert(composer, message) {
     selection.removeAllRanges();
     const range = document.createRange();
     range.selectNodeContents(composer);
-    range.collapse(true);
+    if (!replace) range.collapse(true);
     selection.addRange(range);
     document.execCommand('insertText', false, message);
     if (!hasText(composer)) {
@@ -363,19 +380,7 @@ async function waitForButton(provider, composer, message) {
   return { button: null, disabled: info.disabled };
 }
 
-async function commit(provider, url, runId, message, record) {
-  const reservation = state.reservations.get(runId);
-  if (!reservation || reservation.expires < Date.now() || reservation.runId !== runId
-      || reservation.provider !== provider || reservation.message !== message || !sameTarget(reservation.url, url)) {
-    throw withReason('The preparation expired or no longer matches this run.', REASONS.RESERVATION_STALE);
-  }
-  if (!targetMatches(url)) throw withReason('The conversation changed before sending.', REASONS.TARGET_MISMATCH);
-  const composer = editor(provider);
-  if (composer !== reservation.composer || !composer.isConnected) throw withReason('The composer changed before sending.', REASONS.PAGE_RACE);
-  if (hasText(composer)) throw withReason('The composer changed before sending; the message remains in the composer.', REASONS.DRAFT);
-  if (busy(provider) || attachments(provider, composer) || alertState()) throw withReason('The page is no longer ready to send.', REASONS.BUSY);
-  const inserted = insert(composer, message);
-  if (!inserted) throw withReason('Message insertion was not acknowledged; the message remains in the composer.', REASONS.INSERTION_FAILED);
+async function submit(provider, url, composer, message, baseline, record) {
   const { button, disabled } = await waitForButton(provider, composer, message);
   if (!button) {
     throw disabled
@@ -394,7 +399,7 @@ async function commit(provider, url, runId, message, record) {
   while (Date.now() - started < 10000) {
     if (!targetMatches(url)) return { outcome: 'uncertain', detail: 'The conversation changed after clicking send.' };
     if (alertState()) return { outcome: 'uncertain', detail: 'The site reported an error after clicking send.' };
-    if (matchingUsers(provider, message).length > reservation.baseline
+    if (matchingUsers(provider, message).length > baseline
         && composer.isConnected && !hasText(composer)) {
       return { outcome: 'sent', detail: 'The site acknowledged submission.' };
     }
@@ -403,16 +408,107 @@ async function commit(provider, url, runId, message, record) {
   return { outcome: 'uncertain', detail: 'The site did not acknowledge submission.' };
 }
 
+async function waitUntilIdle(provider, url) {
+  const deadline = Date.now() + SEND_BOTH_IDLE_LIMIT;
+  let candidate = null;
+  let stableSince = 0;
+  while (true) {
+    if (Date.now() >= deadline) {
+      throw withReason('The provider did not become idle within 10 minutes after the existing draft was sent.', REASONS.COMPOSER_NOT_READY);
+    }
+    if (!targetMatches(url)) throw withReason('The conversation changed after clicking send.', REASONS.TARGET_MISMATCH);
+    if (alertState()) throw withReason('The site reported an error after clicking send.', REASONS.PAGE_ALERT);
+    let composer = null;
+    try {
+      composer = editor(provider);
+    } catch (error) {
+      if (error.code !== 'COMPOSER_NOT_FOUND') throw error;
+    }
+    if (!composer) {
+      candidate = null;
+      stableSince = 0;
+      await new Promise(resolve => setTimeout(resolve, 100));
+      continue;
+    }
+    if (attachments(provider, composer)) throw withReason('Pending attachments must be removed before sending.', REASONS.ATTACHMENTS);
+    if (busy(provider)) {
+      candidate = null;
+      stableSince = 0;
+      await new Promise(resolve => setTimeout(resolve, 100));
+      continue;
+    }
+    if (hasText(composer)) throw withReason('A new draft appeared after sending the existing draft.', REASONS.DRAFT);
+    sendButton(provider, composer);
+    if (composer !== candidate) {
+      candidate = composer;
+      stableSince = Date.now();
+    }
+    if (Date.now() - stableSince >= 500) return composer;
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+}
+
+async function commit(provider, url, runId, message, draftPolicy, record) {
+  validDraftPolicy(draftPolicy);
+  const reservation = state.reservations.get(runId);
+  if (!reservation || reservation.expires < Date.now() || reservation.runId !== runId
+      || reservation.provider !== provider || reservation.message !== message
+      || reservation.draftPolicy !== draftPolicy || !sameTarget(reservation.url, url)) {
+    throw withReason('The preparation expired or no longer matches this run.', REASONS.RESERVATION_STALE);
+  }
+  if (!targetMatches(url)) throw withReason('The conversation changed before sending.', REASONS.TARGET_MISMATCH);
+  const composer = editor(provider);
+  if (composer !== reservation.composer || !composer.isConnected) throw withReason('The composer changed before sending.', REASONS.PAGE_RACE);
+  const currentDraft = hasText(composer) ? textOf(composer) : null;
+  if (!sameText(currentDraft, reservation.draft)) {
+    throw withReason('The composer changed before sending; the message remains in the composer.', REASONS.DRAFT);
+  }
+  if (busy(provider) || attachments(provider, composer) || alertState()) throw withReason('The page is no longer ready to send.', REASONS.BUSY);
+  if (reservation.draft === null) {
+    const inserted = insert(composer, message);
+    if (!inserted) throw withReason('Message insertion was not acknowledged; the message remains in the composer.', REASONS.INSERTION_FAILED);
+    return submit(provider, url, composer, message, reservation.baseline, record);
+  }
+  if (draftPolicy === 'skip') throw withReason('The composer already contains a draft; it was left untouched.', REASONS.DRAFT);
+  if (draftPolicy === 'send-scheduled') {
+    const inserted = insert(composer, message, true);
+    if (!inserted) throw withReason('Message insertion was not acknowledged; the message remains in the composer.', REASONS.INSERTION_FAILED);
+    return submit(provider, url, composer, message, reservation.baseline, record);
+  }
+  const draftResult = await submit(provider, url, composer, reservation.draft, reservation.draftBaseline, record);
+  if (draftResult.outcome !== 'sent') return draftResult;
+  if (draftPolicy === 'send-draft') {
+    return { outcome: 'sent', detail: 'The existing draft was sent; the scheduled message was skipped for this occurrence.' };
+  }
+  record.sentDraft = true;
+  const idleComposer = await waitUntilIdle(provider, url);
+  const scheduledBaseline = matchingUsers(provider, message).length;
+  const inserted = insert(idleComposer, message);
+  if (!inserted) throw withReason('Message insertion was not acknowledged; the message remains in the composer.', REASONS.INSERTION_FAILED);
+  const scheduledResult = await submit(provider, url, idleComposer, message, scheduledBaseline, record);
+  if (scheduledResult.outcome === 'sent') {
+    return { outcome: 'sent', detail: 'The existing draft and scheduled message were acknowledged.' };
+  }
+  return {
+    outcome: 'uncertain',
+    detail: `The existing draft was sent, but the scheduled message was not confirmed. ${scheduledResult.detail || 'Submission was not acknowledged.'}`,
+    reason: scheduledResult.reason,
+  };
+}
+
 function commitOnce(provider, message) {
   const existing = state.commits.get(message.runId);
   if (existing) return existing.promise;
-  const record = { clicked: false, promise: null };
+  const record = { clicked: false, sentDraft: false, promise: null };
   state.commits.set(message.runId, record);
   record.promise = (async () => {
     try {
-      return await commit(provider, message.url, message.runId, message.message, record);
+      return await commit(provider, message.url, message.runId, message.message, message.draftPolicy, record);
     } catch (error) {
-      return { outcome: record.clicked ? 'uncertain' : 'blocked', detail: error.message, reason: error.reason };
+      const detail = record.sentDraft
+        ? `The existing draft was sent, but the scheduled message was not confirmed. ${error.message}`
+        : error.message;
+      return { outcome: record.clicked ? 'uncertain' : 'blocked', detail, reason: error.reason };
     } finally {
       state.reservations.delete(message.runId);
       setTimeout(() => {
@@ -434,13 +530,14 @@ if (!globalThis.__promptLaterListeners) {
     const currentProvider = provider();
     const work = (async () => {
       if (!currentProvider || !targetMatches(message.url)) return { status: 'blocked', detail: 'The page is not the selected conversation.', reason: REASONS.TARGET_MISMATCH };
+      const draftPolicy = message.draftPolicy === undefined ? 'skip' : message.draftPolicy;
       if (message.waitForComposer === true && message.type !== 'PL_COMMIT') {
-        await waitForComposer(currentProvider, message.url);
+        await waitForComposer(currentProvider, message.url, message.type === 'PL_PREPARE' ? draftPolicy : 'skip');
         if (!targetMatches(message.url)) return { status: 'blocked', detail: 'The page is not the selected conversation.', reason: REASONS.TARGET_MISMATCH };
       }
       if (message.type === 'PL_INSPECT') return inspection(currentProvider);
-      if (message.type === 'PL_PREPARE') return preflight(currentProvider, message.message, message.runId, message.url);
-      return commitOnce(currentProvider, message);
+      if (message.type === 'PL_PREPARE') return preflight(currentProvider, message.message, message.runId, message.url, draftPolicy);
+      return commitOnce(currentProvider, { ...message, draftPolicy });
     })();
     work.then(respond, error => respond({ outcome: 'blocked', status: 'blocked', detail: error.message, reason: error.reason }));
     return true;

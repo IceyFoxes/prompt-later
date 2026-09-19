@@ -230,6 +230,6 @@ test('legacy ChatGPT contenteditable still sends literal multiline text', async 
     await expect(target.locator('#messages b')).toHaveCount(0);
     expect(await target.evaluate(() => window.__sendClicks)).toBe(1);
     expect((await stored(page)).history.at(-1).status).toBe('sent');
-    await expect(page.locator('#job-list')).toContainText('completed');
+    await expect(page.locator('#job-list')).toContainText('Submitted');
   });
 });

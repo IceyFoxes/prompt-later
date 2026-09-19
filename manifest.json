@@ -1,6 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "Prompt Later",
+  "name": "Prompt Later — AI Chat Scheduler",
+  "short_name": "Prompt Later",
   "version": "0.3.0",
   "description": "Schedule messages in your existing AI chats. Local storage, one-off sends, and recurring schedules.",
   "minimum_chrome_version": "120",

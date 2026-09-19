@@ -9,9 +9,12 @@ const params = new URLSearchParams(location.search);
 const requestedTab = params.get('tab');
 const JOB_DISPLAY_LIMIT = 4;
 const FINAL_RUN_STATUSES = new Set(['sent', 'skipped', 'blocked', 'uncertain']);
+const DRAFT_POLICIES = new Set(['skip', 'send-draft', 'send-both', 'send-scheduled']);
+const DEFAULT_DRAFT_POLICY = 'skip';
+const VALID_TABS = ['send', 'recurring', 'activity', 'info'];
 const state = {
   data: { jobs: [], history: [] },
-  tab: ['send', 'recurring', 'activity'].includes(requestedTab) ? requestedTab : 'send',
+  tab: VALID_TABS.includes(requestedTab) ? requestedTab : 'send',
   editing: null,
   popup: params.get('popup') === '1',
   sourceTabId: params.has('sourceTabId') && Number.isInteger(Number(params.get('sourceTabId'))) && Number(params.get('sourceTabId')) > 0 ? Number(params.get('sourceTabId')) : null,
@@ -121,9 +124,10 @@ async function requireAccess(target) {
   return granted;
 }
 
-function setStatus(value, error = false) {
+function setStatus(value, tone = '') {
+  const normalizedTone = tone === true ? 'error' : tone || (value ? 'success' : '');
   text($('form-status'), value);
-  $('form-status').className = `status ${error ? 'error' : 'success'}`;
+  $('form-status').className = `status${normalizedTone ? ` ${normalizedTone}` : ''}`;
 }
 
 function setPending(value) {
@@ -243,9 +247,10 @@ function syncFormVisibility() {
   $('recurring-time-field').hidden = !['daily', 'weekdays'].includes(recurrence);
   $('cron-field').hidden = recurrence !== 'cron';
   $('recurring-fields').hidden = state.tab !== 'recurring';
-  $('once-fields').hidden = state.tab === 'recurring';
+  $('once-fields').hidden = state.tab !== 'send';
   $('activity-view').hidden = state.tab !== 'activity';
-  $('form-view').hidden = state.tab === 'activity';
+  $('info-view').hidden = state.tab !== 'info';
+  $('form-view').hidden = !['send', 'recurring'].includes(state.tab);
 }
 
 function previewSchedule() {
@@ -256,7 +261,7 @@ function previewSchedule() {
     const next = nextOccurrence(schedule, now);
     const formatted = next ? new Date(next).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short', timeZone: schedule.timeZone }) : '';
     text($('next-preview'), next
-      ? state.popup ? `Next: ${formatted} · ${schedule.timeZone}` : `Next occurrence: ${formatted} (${schedule.timeZone})`
+      ? state.popup ? `Next: ${formatted} · ${schedule.timeZone}. Open dashboard to change timezone.` : `Next occurrence: ${formatted} (${schedule.timeZone})`
       : 'No future occurrence.');
   } catch (error) {
     text($('next-preview'), error.message);
@@ -271,7 +276,8 @@ function renderTabs() {
     tab.tabIndex = selected ? 0 : -1;
   });
   $('form-view').setAttribute('aria-labelledby', state.tab === 'recurring' ? 'tab-recurring' : 'tab-send');
-  document.querySelector('.form-panel').setAttribute('aria-labelledby', state.tab === 'activity' ? 'activity-title' : 'view-title');
+  const panelLabel = state.tab === 'activity' ? 'activity-title' : state.tab === 'info' ? 'info-title' : 'view-title';
+  document.querySelector('.form-panel').setAttribute('aria-labelledby', panelLabel);
   $('view-eyebrow').textContent = state.tab === 'recurring' ? 'Automation' : 'New schedule';
   $('view-title').textContent = state.tab === 'recurring' ? 'Set a recurring message' : 'Send a message later';
   $('view-description').textContent = state.tab === 'recurring'
@@ -287,7 +293,7 @@ function clearForm() {
   form.reset();
   $('timezone').value = timezone();
   $('when').value = '5h';
-  $('recurrence').value = 'interval';
+  $('recurrence').value = 'daily';
   $('interval-hours').value = '5';
   $('recurring-time').value = '07:00';
   $('cron').value = '0 7 * * 1-5';
@@ -349,7 +355,25 @@ function formatCountdown(timestamp) {
 function statusLabel(job) {
   if (job.status === 'needs-attention') return 'Needs attention';
   if (job.status === 'paused') return 'Paused';
+  if (job.status === 'completed') return 'Submitted';
   return job.status;
+}
+
+function confirmAction({ title, description, confirmLabel }) {
+  const dialog = $('confirmation-dialog');
+  if (dialog.open || typeof dialog.showModal !== 'function') return Promise.resolve(false);
+  text($('confirmation-title'), title);
+  text($('confirmation-description'), description);
+  text($('confirmation-accept'), confirmLabel);
+  dialog.returnValue = 'cancel';
+  return new Promise(resolve => {
+    const finish = () => {
+      dialog.removeEventListener('close', finish);
+      resolve(dialog.returnValue === 'confirm');
+    };
+    dialog.addEventListener('close', finish);
+    dialog.showModal();
+  });
 }
 
 function jobCard(job) {
@@ -403,7 +427,11 @@ function jobCard(job) {
   remove.textContent = 'Delete';
   remove.disabled = running;
   remove.addEventListener('click', async () => {
-    if (!confirm('Delete this saved message?')) return;
+    if (!(await confirmAction({
+      title: 'Delete saved message?',
+      description: 'This removes the saved message. Its activity history will remain.',
+      confirmLabel: 'Delete',
+    }))) return;
     const result = await send('DELETE_JOB', { id: job.id });
     if (!result.ok) setStatus(result.error, true);
     else await load();
@@ -435,6 +463,17 @@ function activityCard(run) {
   detail.className = 'meta';
   detail.textContent = run.detail || 'No detail.';
   item.append(heading, provider, link, preview, detail);
+  if (FINAL_RUN_STATUSES.has(run.status)) {
+    const actions = document.createElement('div');
+    actions.className = 'card-actions';
+    const remove = document.createElement('button');
+    remove.className = 'secondary danger';
+    remove.textContent = 'Delete';
+    remove.disabled = state.activityPending;
+    remove.addEventListener('click', () => deleteActivity(run.id));
+    actions.append(remove);
+    item.append(actions);
+  }
   return item;
 }
 
@@ -444,19 +483,19 @@ function renderJobs() {
   const queueToggle = $('popup-queue-toggle');
   list.replaceChildren();
   const isActivity = state.tab === 'activity';
-  document.querySelector('.list-panel').hidden = isActivity;
-  list.hidden = isActivity || (state.popup && !state.popupQueueExpanded);
+  const isInfo = state.tab === 'info';
+  document.querySelector('.list-panel').hidden = isActivity || isInfo;
+  list.hidden = isActivity || isInfo || (state.popup && !state.popupQueueExpanded);
   listToggle.hidden = true;
-  queueToggle.hidden = !state.popup || isActivity;
+  queueToggle.hidden = !state.popup || isActivity || isInfo;
   queueToggle.textContent = state.popupQueueExpanded ? 'Hide' : 'Show';
   queueToggle.setAttribute('aria-expanded', String(state.popupQueueExpanded));
-  document.querySelector('.list-heading').hidden = isActivity;
-  document.querySelector('.privacy').hidden = isActivity;
+  document.querySelector('.list-heading').hidden = isActivity || isInfo;
   const jobs = state.data.jobs.filter(job => state.tab === 'recurring'
     ? job.schedule.type !== 'once'
     : state.tab === 'send' ? job.schedule.type === 'once' : false);
   $('job-count').textContent = `${jobs.length}`;
-  if (state.tab !== 'activity') {
+  if (!isActivity && !isInfo) {
     if (!jobs.length) {
       const empty = document.createElement('div');
       empty.className = 'empty';
@@ -503,7 +542,7 @@ function settlePopupLayout() {
 }
 
 function togglePopupQueue() {
-  if (!state.popup || state.tab === 'activity') return;
+  if (!state.popup || !['send', 'recurring'].includes(state.tab)) return;
   state.popupQueueExpanded = !state.popupQueueExpanded;
   if (!state.popupQueueExpanded) state.expandedJobs[state.tab] = false;
   renderJobs();
@@ -515,9 +554,36 @@ function activityStatus(value, error = false) {
   $('activity-status').className = `status ${error ? 'error' : 'success'}`;
 }
 
+async function deleteActivity(id) {
+  if (state.activityPending || !isUnlocked() || !state.data.history.some(run => run.id === id && FINAL_RUN_STATUSES.has(run.status))) return;
+  if (!(await confirmAction({
+    title: 'Delete activity?',
+    description: 'This removes only this activity entry. Its saved message will remain.',
+    confirmLabel: 'Delete',
+  }))) return;
+  state.activityPending = true;
+  renderJobs();
+  activityStatus('Deleting…');
+  try {
+    const result = await send('DELETE_ACTIVITY', { id });
+    if (!result?.ok) throw new Error(result?.error || 'Activity could not be deleted.');
+    await load();
+    activityStatus('Activity deleted.');
+  } catch (error) {
+    activityStatus(error?.message || 'Activity could not be deleted.', true);
+  } finally {
+    state.activityPending = false;
+    renderJobs();
+  }
+}
+
 async function clearActivity() {
   if (state.activityPending || !isUnlocked() || !state.data.history.some(run => FINAL_RUN_STATUSES.has(run.status))) return;
-  if (!confirm('Clear activity history?')) return;
+  if (!(await confirmAction({
+    title: 'Clear all activity?',
+    description: 'This removes all completed activity entries. Active deliveries will remain.',
+    confirmLabel: 'Clear All',
+  }))) return;
   state.activityPending = true;
   renderJobs();
   activityStatus('Clearing…');
@@ -542,36 +608,73 @@ function clearSchedulerView() {
   renderJobs();
 }
 
-const DRAFT_POLICY_HINTS = {
-  wait: 'For a recurring message, this occurrence is skipped and the next one stays scheduled. A one-off message is held for your attention.',
-  stop: 'The message is held for your attention and any recurring schedule is paused.',
+const DRAFT_CHECK_WARNINGS = {
+  'send-draft': 'Page ready. The existing draft will be sent instead of the scheduled message.',
+  'send-both': 'Page ready. The existing draft will be sent first; the scheduled message will wait until the provider is idle.',
+  'send-scheduled': 'Page ready. The existing draft will be replaced by the scheduled message.',
 };
 
+const DRAFT_POLICY_HINTS = {
+  skip: 'Preserve the draft and skip this occurrence. Recurring schedules stay active; one-off messages need attention.',
+  'send-draft': 'Send the existing composer text and skip the scheduled message for this occurrence.',
+  'send-both': 'Send the existing composer text, wait for the provider to become idle, then send the scheduled message. A partial send is not retried.',
+  'send-scheduled': 'Erase the existing composer text and send the scheduled message. The overwritten draft cannot be restored.',
+};
+
+function persistedDraftPolicy() {
+  const policy = state.data?.settings?.draftPolicy;
+  return DRAFT_POLICIES.has(policy) ? policy : DEFAULT_DRAFT_POLICY;
+}
+
 function renderDeliverySettings() {
-  const visible = !state.popup && isUnlocked();
+  const visible = isUnlocked();
   $('delivery-settings').hidden = !visible;
-  const policy = state.data?.settings?.draftPolicy || 'wait';
+  const policy = persistedDraftPolicy();
   const select = $('draft-policy');
   if (!state.deliveryPending && document.activeElement !== select) select.value = policy;
   select.disabled = !visible || state.deliveryPending;
-  text($('draft-policy-hint'), DRAFT_POLICY_HINTS[select.value] || DRAFT_POLICY_HINTS.wait);
+  text($('draft-policy-hint'), DRAFT_POLICY_HINTS[select.value] || DRAFT_POLICY_HINTS[DEFAULT_DRAFT_POLICY]);
 }
 
 async function changeDraftPolicy() {
-  if (state.popup || state.deliveryPending || !isUnlocked()) return;
-  const chosen = $('draft-policy').value;
+  if (state.deliveryPending || !isUnlocked()) return;
+  const select = $('draft-policy');
+  const previous = persistedDraftPolicy();
+  const chosen = select.value;
   state.deliveryPending = true;
+  state.data.settings = { draftPolicy: chosen };
+  text($('delivery-status'), '');
+  $('delivery-status').className = 'status';
   renderDeliverySettings();
-  const result = await send('UPDATE_SETTINGS', { draftPolicy: chosen });
-  state.deliveryPending = false;
-  text($('delivery-status'), result.ok ? 'Saved.' : result.error);
-  $('delivery-status').className = `status ${result.ok ? 'success' : 'error'}`;
-  if (result.ok) await load();
-  else renderDeliverySettings();
+  if (chosen === 'send-scheduled' && !(await confirmAction({
+    title: 'Replace existing drafts?',
+    description: 'This can permanently erase text already in a provider composer and send the scheduled message instead.',
+    confirmLabel: 'Use Replace',
+  }))) {
+    state.data.settings = { draftPolicy: previous };
+    state.deliveryPending = false;
+    renderDeliverySettings();
+    return;
+  }
+  try {
+    const result = await send('UPDATE_SETTINGS', { draftPolicy: chosen });
+    if (!result?.ok) throw new Error(result?.error || 'Delivery setting could not be saved.');
+    if (DRAFT_POLICIES.has(result.data?.draftPolicy)) state.data.settings = { draftPolicy: result.data.draftPolicy };
+    await load();
+    text($('delivery-status'), 'Saved.');
+    $('delivery-status').className = 'status success';
+  } catch (error) {
+    state.data.settings = { draftPolicy: previous };
+    text($('delivery-status'), error?.message || 'Delivery setting could not be saved.');
+    $('delivery-status').className = 'status error';
+  } finally {
+    state.deliveryPending = false;
+    renderDeliverySettings();
+  }
 }
 
 function renderPrivacySettings() {
-  $('privacy-settings').hidden = !(!state.popup && isUnlocked());
+  $('privacy-settings').hidden = !isUnlocked();
 }
 
 function renderVault(status, error = '') {
@@ -709,8 +812,16 @@ async function checkPage() {
     if (!(await requireAccess(target))) return;
     const result = await send('CHECK_TARGET', { url: target.url });
     if (!result.ok) throw new Error(result.error);
-    if (result.data?.status === 'blocked') {
-      setStatus(result.data.detail || 'Page is not ready.', true);
+    const data = result.data || {};
+    const policy = persistedDraftPolicy();
+    const draftReady = data.status === 'blocked' && data.draft === true && data.busy === false
+      && data.attachments === false && !data.error && DRAFT_CHECK_WARNINGS[policy];
+    if (draftReady) {
+      setStatus(DRAFT_CHECK_WARNINGS[policy], 'warning');
+      $('check').classList.add('check-success');
+      $('check').textContent = '✓ Ready with draft';
+    } else if (data.status === 'blocked') {
+      setStatus(data.detail || 'Page is not ready.', true);
     } else {
       setStatus('');
       $('check').classList.add('check-success');
@@ -752,10 +863,12 @@ async function draftWarning(target) {
   try {
     const result = await send('CHECK_TARGET', { url: target.url, openIfMissing: false });
     if (!result.ok || result.data?.draft !== true) return '';
-    const policy = state.data?.settings?.draftPolicy || 'wait';
-    return policy === 'stop'
-      ? ` ${providerLabel(target.provider)} has text in its composer right now. If it is still there when this runs, the message will be held for you instead of sent.`
-      : ` ${providerLabel(target.provider)} has text in its composer right now. If it is still there when this runs, a one-off message will be held for your attention and a recurring schedule will continue with its next occurrence.`;
+    const policy = persistedDraftPolicy();
+    const provider = providerLabel(target.provider);
+    if (policy === 'send-draft') return ` ${provider} has text in its composer right now. If it is still there when this runs, the existing draft will be sent instead of the scheduled message for that occurrence.`;
+    if (policy === 'send-both') return ` ${provider} has text in its composer right now. If it is still there when this runs, the draft will be sent first, then the scheduled message will be sent after the provider becomes idle.`;
+    if (policy === 'send-scheduled') return ` ${provider} has text in its composer right now. If it is still there when this runs, the draft will be replaced by the scheduled message.`;
+    return ` ${provider} has text in its composer right now. If it is still there when this runs, a recurring schedule will continue with its next occurrence and a one-off message will need your attention.`;
   } catch {
     return '';
   }
@@ -815,6 +928,9 @@ form.addEventListener('submit', save);
 $('current-tab').addEventListener('click', () => currentTab(false, true));
 $('current-tab-dialog').addEventListener('click', event => {
   if (event.target === $('current-tab-dialog')) $('current-tab-dialog').close();
+});
+$('confirmation-dialog').addEventListener('click', event => {
+  if (event.target === $('confirmation-dialog')) $('confirmation-dialog').close('cancel');
 });
 $('check').addEventListener('click', checkPage);
 $('clear-activity').addEventListener('click', clearActivity);

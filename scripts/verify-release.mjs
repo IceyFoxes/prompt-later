@@ -31,7 +31,8 @@ export function validateReleaseMetadata(manifest, pkg, lock, tag = '') {
   assert.equal(lock.version, manifest.version, 'Lockfile and manifest versions differ.');
   assert.equal(lock.packages?.['']?.version, manifest.version, 'Lockfile root version differs.');
   assert.equal(manifest.manifest_version, 3, 'Only Manifest V3 is supported.');
-  assert.equal(manifest.name, 'Prompt Later');
+  assert.equal(manifest.name, 'Prompt Later — AI Chat Scheduler');
+  assert.equal(manifest.short_name, 'Prompt Later');
   assert.equal(manifest.minimum_chrome_version, '120');
   assert.deepEqual(manifest.permissions, ['storage', 'alarms', 'activeTab', 'scripting']);
   assert.deepEqual(manifest.optional_host_permissions, optionalHostPermissions());

@@ -1,7 +1,6 @@
 import { nextOccurrence, validateSchedule } from './schedules.js';
 import { draftPolicyOf, pruneHistory, validateDraftPolicy, validateState } from './store.js';
 import { parseTarget } from './targets.js';
-import { REASONS } from './outcomes.js';
 
 const LATE_LIMIT = 5 * 60 * 1000;
 const ACTIVE_RUNS = new Set(['checking', 'dispatching']);
@@ -188,6 +187,17 @@ export class Scheduler {
     });
   }
 
+  async deleteActivity(id) {
+    return this._mutate(async draft => {
+      if (typeof id !== 'string' || !id) throw new Error('Activity entry not found.');
+      const index = draft.history.findIndex(run => run.id === id);
+      if (index < 0) throw new Error('Activity entry not found.');
+      if (ACTIVE_RUNS.has(draft.history[index].status)) throw new Error('Active delivery activity cannot be deleted.');
+      draft.history.splice(index, 1);
+      return { removed: 1 };
+    });
+  }
+
   async deleteJob(id) {
     return this._mutate(async draft => {
       const index = draft.jobs.findIndex(item => item.id === id);
@@ -220,7 +230,7 @@ export class Scheduler {
       job.runId = run.id;
       job.updatedAt = now;
       draft.history.push(run);
-      return { job, run };
+      return { job, run, draftPolicy: draftPolicyOf(draft) };
     });
   }
 
@@ -259,9 +269,7 @@ export class Scheduler {
           job.enabled = false;
         }
       } else {
-        const continueRecurring = !(result?.reason === REASONS.DRAFT && draftPolicyOf(draft) === 'stop')
-          && advanceRecurring(job, Math.max(finishedAt, run.dueAt));
-        if (!continueRecurring) setAttention(job);
+        if (!advanceRecurring(job, Math.max(finishedAt, run.dueAt))) setAttention(job);
       }
     });
   }
@@ -302,7 +310,7 @@ export class Scheduler {
         result = await this.deliver(selected.job, selected.run, async () => {
           await this._markDispatching(selected.job.id, selected.run.id);
           marked = true;
-        });
+        }, selected.draftPolicy);
       } catch (error) {
         result = {
           outcome: marked ? 'uncertain' : 'blocked',

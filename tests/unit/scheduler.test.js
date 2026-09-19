@@ -108,26 +108,32 @@ test('a blocked recurring occurrence advances to the next occurrence', async () 
   assert.equal(environment.store.data.history[0].status, 'blocked');
 });
 
-test('draft wait skips one recurring occurrence while stop pauses the schedule', async () => {
-  const recurring = () => once(900, { schedule: { type: 'interval', everyMs: 60000, anchor: 0, timeZone: 'UTC' } });
-  const wait = make(
-    { ...emptyState(), jobs: [recurring()] },
-    async () => ({ outcome: 'blocked', detail: 'draft exists', reason: 'draft' }),
-  );
-  await wait.scheduler.initialize();
-  await wait.scheduler.tick();
-  assert.equal(wait.store.data.jobs[0].status, 'scheduled');
-  assert.equal(wait.store.data.jobs[0].nextRunAt, 60000);
+test('draft-blocked recurring occurrences advance for every policy while one-offs need attention', async () => {
+  for (const draftPolicy of ['skip', 'send-draft', 'send-both', 'send-scheduled']) {
+    const recurring = once(900, { schedule: { type: 'interval', everyMs: 60000, anchor: 0, timeZone: 'UTC' } });
+    let receivedPolicy;
+    const recurringEnvironment = make(
+      { ...emptyState(), jobs: [recurring], settings: { draftPolicy } },
+      async (job, run, mark, policy) => {
+        receivedPolicy = policy;
+        return { outcome: 'blocked', detail: 'draft exists', reason: 'draft' };
+      },
+    );
+    await recurringEnvironment.scheduler.initialize();
+    await recurringEnvironment.scheduler.tick();
+    assert.equal(receivedPolicy, draftPolicy);
+    assert.equal(recurringEnvironment.store.data.jobs[0].status, 'scheduled');
+    assert.equal(recurringEnvironment.store.data.jobs[0].nextRunAt, 60000);
 
-  const stop = make(
-    { ...emptyState(), jobs: [recurring()] },
-    async () => ({ outcome: 'blocked', detail: 'draft exists', reason: 'draft' }),
-  );
-  await stop.scheduler.initialize();
-  await stop.scheduler.updateSettings({ draftPolicy: 'stop' });
-  await stop.scheduler.tick();
-  assert.equal(stop.store.data.jobs[0].status, 'needs-attention');
-  assert.equal(stop.store.data.jobs[0].enabled, false);
+    const oneOffEnvironment = make(
+      { ...emptyState(), jobs: [once(900)], settings: { draftPolicy } },
+      async () => ({ outcome: 'blocked', detail: 'draft exists', reason: 'draft' }),
+    );
+    await oneOffEnvironment.scheduler.initialize();
+    await oneOffEnvironment.scheduler.tick();
+    assert.equal(oneOffEnvironment.store.data.jobs[0].status, 'needs-attention');
+    assert.equal(oneOffEnvironment.store.data.jobs[0].enabled, false);
+  }
 });
 
 test('an unknown draft policy is rejected and leaves the setting alone', async () => {
@@ -358,16 +364,37 @@ test('clearing activity removes finalized runs and preserves active delivery sta
   assert.equal(environment.store.data.jobs[0].runId, 'active-run');
 });
 
+test('deletes one finalized activity, preserves the rest, and rejects active or missing IDs', async () => {
+  const sent = {
+    id: 'sent-run', jobId: 'job-1', url: target, provider: 'chatgpt', preview: 'Hello',
+    dueAt: 1, startedAt: 1, finishedAt: 2, status: 'sent', detail: '',
+  };
+  const blocked = { ...sent, id: 'blocked-run', finishedAt: 3, status: 'blocked' };
+  const active = { ...sent, id: 'active-run', finishedAt: null, status: 'checking' };
+  const state = { ...emptyState(), jobs: [once(5000)], history: [sent, blocked, active], settings: { draftPolicy: 'skip' } };
+  const environment = make(state);
+  environment.scheduler.initialized = true;
+  const result = await environment.scheduler.deleteActivity('sent-run');
+  assert.deepEqual(result, { removed: 1 });
+  assert.deepEqual(environment.store.data.history, [blocked, active]);
+  assert.equal(environment.store.data.jobs[0].id, 'job-1');
+  assert.deepEqual(environment.store.data.settings, { draftPolicy: 'skip' });
+  const unchanged = structuredClone(environment.store.data);
+  await assert.rejects(() => environment.scheduler.deleteActivity('active-run'), /Active delivery activity cannot be deleted/);
+  await assert.rejects(() => environment.scheduler.deleteActivity('missing-run'), /Activity entry not found/);
+  assert.deepEqual(environment.store.data, unchanged);
+});
+
 test('clearing activity preserves jobs and settings and stays cleared', async () => {
   const sent = {
     id: 'sent-run', jobId: 'job-1', url: target, provider: 'chatgpt', preview: 'Hello',
     dueAt: 1, startedAt: 1, finishedAt: 2, status: 'sent', detail: '',
   };
-  const state = { ...emptyState(), jobs: [once(5000)], history: [sent], settings: { draftPolicy: 'stop' } };
+  const state = { ...emptyState(), jobs: [once(5000)], history: [sent], settings: { draftPolicy: 'skip' } };
   const environment = make(state);
   await environment.scheduler.initialize();
   await environment.scheduler.clearActivity();
   assert.deepEqual(environment.store.data.history, []);
   assert.equal(environment.store.data.jobs[0].id, 'job-1');
-  assert.deepEqual(environment.store.data.settings, { draftPolicy: 'stop' });
+  assert.deepEqual(environment.store.data.settings, { draftPolicy: 'skip' });
 });
