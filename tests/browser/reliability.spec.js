@@ -478,6 +478,7 @@ test('R11 real MV3 alarm delivers after extension UI closes and deletion preserv
     await dashboard.getByRole('button', { name: 'Delete' }).click();
     await expect(dashboard.locator('#confirmation-dialog')).toBeVisible();
     await dashboard.locator('#confirmation-accept').click();
+    await expect(dashboard.locator('#job-list')).not.toContainText(message);
     await dashboard.reload();
     await expect(dashboard.locator('#job-list')).not.toContainText(message);
     await dashboard.locator('[data-tab="activity"]').click();

@@ -585,6 +585,7 @@ testWithExtension('activity entries can be deleted individually and cleared with
   await page.locator('#when').selectOption('1m');
   await page.locator('#message').fill('Saved activity message');
   await page.locator('#save').click();
+  await expect(page.locator('#form-status')).toContainText('Message scheduled.');
   const stored = await readState(page);
   stored.jobs[0].status = 'running';
   stored.jobs[0].runId = 'activity-active';
