@@ -41,6 +41,7 @@ test('store disclosures describe automatic device encryption without weakening r
   assert.match(listing.description, /Advanced privacy in the full dashboard/);
   assert.doesNotMatch(listing.description, /unless you choose to stop them/);
   assert.match(listing.description, /safe default preserves it and skips that occurrence/);
+  assert.doesNotMatch(listing.description, /Devin, Gemini|DeepSeek, Kimi|Microsoft Copilot|Mistral Le Chat/);
   assert.match(listing.permissionJustifications.scripting, /selected existing-draft behavior/);
   assert.match(listing.permissionJustifications.storage, /non-exportable.*IndexedDB/);
   const policy = listing.privacySections.flatMap(section => section.paragraphs).join('\n');
