@@ -59,7 +59,7 @@ if (fs.existsSync(samplePath)) {
 
 const environment = await openExtension();
 try {
-  const { page, context } = environment;
+  const { page, context, id } = environment;
   await tickFromPage(page);
   await page.evaluate(() => chrome.alarms.clearAll());
   await page.setViewportSize({ width: 1280, height: 800 });
@@ -83,6 +83,27 @@ try {
   await page.locator('#privacy-title').getByText('Automatic device protection', { exact: true }).waitFor();
   await page.locator('#privacy-settings').scrollIntoViewIfNeeded();
   await page.screenshot({ path: path.join(images, 'privacy-settings.png') });
+
+  const popup = await context.newPage();
+  await popup.setViewportSize({ width: 320, height: 600 });
+  await popup.goto(`chrome-extension://${id}/app.html?popup=1`);
+  await popup.locator('.shell').waitFor({ state: 'visible' });
+  await popup.locator('#scheduler-view').waitFor({ state: 'visible' });
+  await popup.locator('#url').fill(once.url);
+  await popup.locator('#message').fill(once.message);
+  await popup.locator('#provider-chip').waitFor({ state: 'visible' });
+  await popup.locator('#message').waitFor({ state: 'visible' });
+  await popup.waitForFunction(message => document.querySelector('#message')?.value === message, once.message);
+  await popup.locator('#popup-queue-toggle').waitFor({ state: 'visible' });
+  await popup.evaluate(() => window.scrollTo(0, 0));
+  const popupImage = await popup.locator('.shell').screenshot({ omitBackground: false });
+  const popupCanvas = await context.newPage();
+  await popupCanvas.setViewportSize({ width: 1280, height: 800 });
+  await popupCanvas.setContent(`<!doctype html><html><head><meta charset="utf-8"><style>*{box-sizing:border-box}html,body{width:1280px;height:800px;margin:0;overflow:hidden}body{display:grid;place-items:center;background:radial-gradient(circle at 50% 15%,#f0efff 0,#f6f7fb 58%,#f6f7fb 100%)}img{display:block;height:700px;width:auto;max-width:620px;object-fit:contain;border:1px solid #e2e5ef;box-shadow:0 18px 45px rgba(32,25,72,.16)}</style></head><body><img src="data:image/png;base64,${popupImage.toString('base64')}" alt=""></body></html>`);
+  await popupCanvas.screenshot({ path: path.join(images, 'popup.png') });
+  await popup.close();
+  await popupCanvas.close();
+
   const promo = await context.newPage();
   await promo.setViewportSize({ width: 440, height: 280 });
   const icon = fs.readFileSync(path.join(images, 'icon128.png')).toString('base64');
@@ -92,5 +113,5 @@ try {
 } finally {
   await closeExtension(environment);
 }
-console.log('Generated draft store pages, a 128px icon, a 440x280 promo image, and three 1280x800 fixture screenshots.');
+console.log('Generated draft store pages, a 128px icon, a 440x280 promo image, and four 1280x800 fixture screenshots.');
 console.log('Demo inputs are frozen in store/demo-state.json. No live provider messages were sent.');

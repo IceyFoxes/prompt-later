@@ -56,7 +56,7 @@ test('store disclosures describe automatic device encryption without weakening r
 test('store images have the required PNG dimensions', () => {
   for (const [name, width, height] of [
     ['icon128.png', 128, 128], ['small-promo.png', 440, 280],
-    ['send-later.png', 1280, 800], ['recurring.png', 1280, 800], ['privacy-settings.png', 1280, 800],
+    ['send-later.png', 1280, 800], ['recurring.png', 1280, 800], ['privacy-settings.png', 1280, 800], ['popup.png', 1280, 800],
   ]) {
     const image = fs.readFileSync(path.join(store, 'images', name));
     assert.equal(image.subarray(0, 8).toString('hex'), '89504e470d0a1a0a', name);
