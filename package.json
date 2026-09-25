@@ -2,6 +2,7 @@
   "name": "prompt-later",
   "version": "0.3.0",
   "private": true,
+  "license": "GPL-3.0-only",
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
