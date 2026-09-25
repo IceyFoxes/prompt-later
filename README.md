@@ -25,22 +25,19 @@ Prompt Later automates provider webpages; it does not use provider APIs. The bro
 
 A **Sent** result means that the webpage acknowledged the message. It does not guarantee that the provider completed a response. Prompt Later does not bypass provider quotas or usage limits.
 
-## Install from source
+## Install
 
-You need Chrome 120 or newer, Node.js 24, and Python 3.
+[Install Prompt Later from the Chrome Web Store](https://chromewebstore.google.com/detail/mlcnccgjmdfalcjplophachfjmpmbhal). Chrome 120 or newer is required.
+
+## Development
+
+To build and test the extension, you need Node.js 24 and Python 3:
 
 ```sh
 git clone https://github.com/IceyFoxes/prompt-later.git
 cd prompt-later
 npm ci
-npm run build
-```
 
-Then open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**, and select the generated `dist` directory.
-
-## Development
-
-```sh
 # Build the unpacked extension
 npm run build
 
